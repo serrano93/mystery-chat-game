@@ -33,7 +33,7 @@ Otros scripts:
 npm run build       # tsc -b && vite build  ->  /dist
 npm run preview     # sirve /dist en local
 npm run typecheck   # solo comprobación de tipos
-npm run test:logic  # 50 comprobaciones de la lógica de juego (sin navegador)
+npm run test:logic  # 59 comprobaciones de la lógica de juego (sin navegador)
 ```
 
 ---
@@ -70,6 +70,7 @@ src/
 │   ├── fallback.ts         # motor local contextual (sin IA)
 │   ├── intents.ts          # intención, tono emocional y temas mencionados
 │   ├── secrets.ts          # cuándo el NPC suelta un recuerdo
+│   ├── suggestions.ts      # sugerencias del compositor según el estado
 │   ├── claims.ts           # registro de afirmaciones y confrontación
 │   ├── memory.ts           # memoria narrativa por contacto
 │   ├── missions.ts         # motor de activación/completado de misiones
@@ -121,6 +122,26 @@ scripts/
 
 La solución vive en `src/data/case.ts` (`SOLUTION`). Es client-side y por tanto inspeccionable:
 es una decisión consciente de diseño para mantener el proyecto 100 % estático.
+
+---
+
+### Sugerencias del compositor
+
+Los botones sobre el campo de texto no son frases fijas: se recalculan con cada mensaje a partir del
+estado real de la partida. Se generan hasta **3**, como máximo una de cada tipo, por este orden de
+prioridad:
+
+| Tipo | Cuándo aparece | Qué hace |
+| :--- | :--- | :--- |
+| **Pista** | El NPC ya confía lo suficiente (`trust >= minTrust`) y le queda un secreto sin soltar | Escribe la pregunta que toca el tema. La frase sale de `revealHint` y **contiene palabras clave del secreto**, así que garantiza la revelación |
+| **Prueba** | Tienes una prueba que afecta a este contacto (`effects`) y no se la has enviado | La adjunta directamente al chat |
+| **Confrontar** | Hay una mentira registrada y **puede tumbarse** ahora: tienes la prueba o la confianza ya es ≥65 | Escribe la contradicción citando lo que dijo |
+| **Confianza** | Queda un secreto por encima del umbral actual | Frase ajustada al temperamento. Se comprueba en los tests que **suma confianza de verdad** para ese temperamento (la empatía resta en los hostiles) |
+| **Hilo** | Siempre | Pregunta segura para no quedarse sin conversación |
+
+Cada botón lleva una explicación en su `title` (por qué se sugiere y, si hay misión activa, cuál).
+Los nombres de las frases se eligen con un índice estable derivado del número de mensajes, así que no
+parpadean entre renders.
 
 ---
 
@@ -247,6 +268,7 @@ El tier de modelo se guarda aparte, en `mystery-model-tier`.
 - [x] Tiers de modelo y prompt narrativo con intención y tono.
 - [x] Secretos revelados como seguimiento natural en vez de frase pegada.
 - [x] Nombre del detective en pantalla de inicio, guardado y prompt.
+- [x] Sugerencias del compositor dinámicas, guiadas por el estado de la partida.
 - [ ] Streaming de respuestas token a token.
 - [ ] Avatares ilustrados y pruebas como imágenes.
 - [ ] Memoria episódica por NPC ("me prometió discreción", "le mentí y aún me mira raro").

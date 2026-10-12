@@ -15,9 +15,12 @@ import { buildMessages } from '../src/lib/context';
 import { contextualFallback } from '../src/lib/fallback';
 import { evaluateEnding } from '../src/lib/endings';
 import { analyzeTurn } from '../src/lib/intents';
+import { analyzeMessage } from '../src/lib/logic';
 import { createHeuristicMemory } from '../src/lib/memory';
 import { processMissions, type MissionProcessInput } from '../src/lib/missions';
 import { extractKeywords, getAvailableSecrets, pickSecretToReveal } from '../src/lib/secrets';
+import { buildSuggestions } from '../src/lib/suggestions';
+import { normalize } from '../src/lib/text';
 import { cleanPlayerName, personalize, sanitizePlayerName } from '../src/utils/player';
 import type { Claim, Contact, ContactState, Intent, ReplyContext } from '../src/types';
 
@@ -692,20 +695,283 @@ check('el prompt narrativo declara quién es el jugador', () => {
   return `${messages.length} mensajes, system=${system.length} car.`;
 });
 
-check('el fallback se dirige al jugador por su nombre', () => {
-  const text = contextualFallback(
-    replyCtx({
-      trust: 80,
-      userMessage: 'Gracias, García.',
-      analysis: analyzeTurn('Gracias, García.')
-    })
+check('el fallback puede dirigirse al jugador por su nombre', () => {
+  // Las frases del inspector se eligen al azar y no todas llevan el nombre a
+  // propósito (repetirlo en cada línea sonaría robótico), así que se muestrea
+  // en lugar de exigirlo en una sola tirada.
+  const samples = Array.from({ length: 40 }, () =>
+    contextualFallback(
+      replyCtx({
+        trust: 80,
+        userMessage: 'Gracias, García.',
+        analysis: analyzeTurn('Gracias, García.')
+      })
+    )
   );
-  expect(text.includes('Javier'), `no usó el nombre: "${text}"`);
-  return text;
+
+  const named = samples.filter((text) => text.includes('Javier'));
+  expect(named.length > 0, 'ninguna de 40 respuestas usó el nombre');
+  expect(named.length < samples.length, 'todas las respuestas usan el nombre: sonaría repetitivo');
+  return `${named.length}/${samples.length} usan el nombre`;
 });
 
 // ---------------------------------------------------------------------------
-console.log('\n[10] Ajustes de modelo');
+console.log('\n[11] Sugerencias del compositor');
+// ---------------------------------------------------------------------------
+
+check('cada pista sugerida contiene una palabra clave de su secreto', () => {
+  const bad: string[] = [];
+
+  for (const person of CONTACTS) {
+    for (const secret of person.secrets) {
+      const norm = normalize(secret.revealHint ?? '');
+      const hit = extractKeywords(secret).some((keyword) => norm.includes(keyword));
+      if (!hit) bad.push(`${secret.id} -> "${secret.revealHint}"`);
+    }
+  }
+
+  expect(bad.length === 0, `sin palabra clave: ${bad.join(' | ')}`);
+  return `${ALL_SECRETS.length} pistas`;
+});
+
+check('enviar la pista sugerida revela ese secreto', () => {
+  for (const person of CONTACTS) {
+    for (const secret of person.secrets) {
+      const hint = secret.revealHint ?? '';
+      const revealed = pickSecretToReveal({
+        contact: person,
+        trust: secret.minTrust,
+        revealedIds: ALL_SECRETS.filter((id) => id !== secret.id),
+        analysis: analyzeTurn(hint),
+        userMessage: hint,
+        userTurns: 1
+      });
+
+      expect(revealed?.id === secret.id, `${secret.id}: reveló ${revealed?.id ?? 'nada'}`);
+    }
+  }
+
+  return `${ALL_SECRETS.length} secretos`;
+});
+
+check('las frases para subir confianza suman en su temperamento', () => {
+  for (const person of CONTACTS) {
+    const suggestions = buildSuggestions({
+      contact: person,
+      trust: 10,
+      revealedSecretIds: ALL_SECRETS.filter((id) => person.secrets.every((s) => s.id !== id)),
+      claims: [],
+      evidenceOwned: [],
+      sentEvidenceIds: [],
+      seed: 0
+    });
+
+    const builder = suggestions.find((s) => s.id.startsWith('trust:'));
+    expect(Boolean(builder), `${person.id}: sin sugerencia para subir confianza`);
+    if (!builder || builder.kind !== 'say') continue;
+
+    const delta = analyzeMessage(builder.text, person).trustDelta;
+    expect(delta > 0, `${person.id}: "${builder.text}" da ${delta}`);
+  }
+
+  return `${CONTACTS.length} temperamentos`;
+});
+
+check('sin confianza suficiente no se sugiere la pista, pero sí subirla', () => {
+  const suggestions = buildSuggestions({
+    contact: inspector,
+    trust: 18,
+    revealedSecretIds: [],
+    claims: [],
+    evidenceOwned: [],
+    sentEvidenceIds: [],
+    seed: 0
+  });
+
+  const kinds = suggestions.map((s) => s.id.split(':')[0]);
+  expect(!kinds.includes('probe'), 'sugirió una pista que la confianza aún no permite');
+  expect(kinds.includes('trust'), 'no sugirió subir confianza');
+  return kinds.join(', ');
+});
+
+check('con la confianza justa aparece la pista que desbloquea al mayordomo', () => {
+  const suggestions = buildSuggestions({
+    contact: inspector,
+    trust: 30,
+    revealedSecretIds: [],
+    claims: [],
+    evidenceOwned: [],
+    sentEvidenceIds: [],
+    seed: 0
+  });
+
+  const probe = suggestions.find((s) => s.id.startsWith('probe:'));
+  expect(Boolean(probe), 'no apareció la pista');
+  if (!probe || probe.kind !== 'say') return 'sin pista';
+
+  const secretId = probe.id.replace('probe:', '');
+  expect(secretId === 'inspector_key', `sugirió ${secretId}`);
+
+  const secret = inspector.secrets.find((s) => s.id === secretId);
+  expect(secret?.unlocksContactId === 'butler', 'la pista no desbloquea al mayordomo');
+
+  const revealed = pickSecretToReveal({
+    contact: inspector,
+    trust: 30,
+    revealedIds: [],
+    analysis: analyzeTurn(probe.text),
+    userMessage: probe.text,
+    userTurns: 1
+  });
+  expect(revealed?.id === 'inspector_key', 'la pista no revela el secreto');
+  return `"${probe.label}" -> desbloquea a ${secret?.unlocksContactId}`;
+});
+
+check('la prueba solo se sugiere si afecta a este contacto y no se envió', () => {
+  const base = {
+    contact: victor,
+    trust: 40,
+    revealedSecretIds: [],
+    claims: [],
+    seed: 0
+  };
+
+  const without = buildSuggestions({ ...base, evidenceOwned: [], sentEvidenceIds: [] });
+  expect(!without.some((s) => s.kind === 'send_evidence'), 'sugirió una prueba que no tiene');
+
+  const withEvidence = buildSuggestions({
+    ...base,
+    evidenceOwned: ['letter'],
+    sentEvidenceIds: []
+  });
+  const chip = withEvidence.find((s) => s.kind === 'send_evidence');
+  expect(Boolean(chip), 'no sugirió la carta contra Víctor');
+  expect(chip?.kind === 'send_evidence' && chip.evidenceId === 'letter', 'sugirió otra prueba');
+
+  const alreadySent = buildSuggestions({
+    ...base,
+    evidenceOwned: ['letter'],
+    sentEvidenceIds: ['letter']
+  });
+  expect(!alreadySent.some((s) => s.kind === 'send_evidence'), 'repitió una prueba ya enviada');
+
+  return chip?.label ?? '';
+});
+
+check('la confrontación solo se sugiere cuando puede ganarse', () => {
+  const claim: Claim = {
+    id: 'cx',
+    contactId: 'victor',
+    topic: 'statue',
+    statement: 'Nunca toqué esa estatua. No sé de qué hablas.',
+    truth: 'lie',
+    exposed: false,
+    createdAt: Date.now()
+  };
+
+  const weak = buildSuggestions({
+    contact: victor,
+    trust: 30,
+    revealedSecretIds: [],
+    claims: [claim],
+    evidenceOwned: [],
+    sentEvidenceIds: [],
+    seed: 0
+  });
+  expect(!weak.some((s) => s.id.startsWith('confront:')), 'sugirió una confrontación perdida');
+
+  const withProof = buildSuggestions({
+    contact: victor,
+    trust: 30,
+    revealedSecretIds: [],
+    claims: [claim],
+    evidenceOwned: ['statue_dust'],
+    sentEvidenceIds: ['statue_dust'],
+    seed: 0
+  });
+  const chip = withProof.find((s) => s.id.startsWith('confront:'));
+  expect(Boolean(chip), 'no sugirió confrontar teniendo la prueba');
+  if (chip?.kind !== 'say') return '';
+
+  // La frase sugerida tiene que ser reconocida como confrontación de verdad.
+  const detected = detectConfrontation({
+    text: chip.text,
+    contactId: 'victor',
+    claims: [claim],
+    evidenceOwned: ['statue_dust'],
+    contacts: { victor: { unlocked: true, trust: 30 } }
+  });
+  expect(detected !== null, 'la frase sugerida no se detecta como confrontación');
+  expect(detected?.claim.id === 'cx', 'detectó otra afirmación');
+  expect(detected?.success === true, 'la confrontación sugerida no tendría éxito');
+
+  return chip.label;
+});
+
+check('las sugerencias son entre 1 y 3 en cualquier estado', () => {
+  let total = 0;
+
+  for (const person of CONTACTS) {
+    for (const trust of [0, 20, 45, 70, 95]) {
+      for (const evidence of [[], ['letter', 'statue_dust']]) {
+        const suggestions = buildSuggestions({
+          contact: person,
+          trust,
+          revealedSecretIds: [],
+          claims: [],
+          evidenceOwned: evidence,
+          sentEvidenceIds: [],
+          seed: total
+        });
+
+        expect(suggestions.length >= 1, `${person.id}/${trust}: sin sugerencias`);
+        expect(suggestions.length <= 3, `${person.id}/${trust}: ${suggestions.length} sugerencias`);
+
+        const ids = suggestions.map((s) => s.id);
+        expect(new Set(ids).size === ids.length, `${person.id}/${trust}: sugerencias repetidas`);
+
+        for (const suggestion of suggestions) {
+          if (suggestion.kind === 'say') {
+            expect(suggestion.text.trim().length > 0, `${suggestion.id}: texto vacío`);
+          }
+          expect(suggestion.hint.trim().length > 0, `${suggestion.id}: sin explicación`);
+        }
+
+        total += 1;
+      }
+    }
+  }
+
+  return `${total} estados`;
+});
+
+check('las sugerencias cambian según avanza la partida', () => {
+  const early = buildSuggestions({
+    contact: cook,
+    trust: 20,
+    revealedSecretIds: [],
+    claims: [],
+    evidenceOwned: [],
+    sentEvidenceIds: [],
+    seed: 0
+  }).map((s) => s.id);
+
+  const late = buildSuggestions({
+    contact: cook,
+    trust: 85,
+    revealedSecretIds: [],
+    claims: [],
+    evidenceOwned: ['letter', 'statue_dust'],
+    sentEvidenceIds: [],
+    seed: 0
+  }).map((s) => s.id);
+
+  expect(early.join('|') !== late.join('|'), 'sugiere lo mismo al principio y al final');
+  return `inicio=[${early.join(', ')}]  avance=[${late.join(', ')}]`;
+});
+
+// ---------------------------------------------------------------------------
+console.log('\n[12] Ajustes de modelo');
 // ---------------------------------------------------------------------------
 
 check('sin navegador se elige el tier equilibrado', () => {

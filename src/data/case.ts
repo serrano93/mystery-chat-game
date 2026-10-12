@@ -89,7 +89,8 @@ export const CONTACTS: Contact[] = [
           'estudio',
           'puerta',
           'sebastian'
-        ]
+        ],
+        revealHint: '¿Por dónde empiezo, inspector?'
       }
     ]
   },
@@ -127,7 +128,8 @@ export const CONTACTS: Contact[] = [
           'eduardo',
           'grito',
           'voz'
-        ]
+        ],
+        revealHint: '¿Se oyó alguna discusión anoche en la casa?'
       },
       {
         id: 'butler_statue',
@@ -135,7 +137,8 @@ export const CONTACTS: Contact[] = [
         content:
           'La estatua de bronce del vestíbulo falta desde anoche. Yo la pulí por la tarde; estaba en su peana.',
         evidenceId: 'statue_dust',
-        keywords: ['estatua', 'bronce', 'vestibulo', 'peana', 'pulir', 'falta']
+        keywords: ['estatua', 'bronce', 'vestibulo', 'peana', 'pulir', 'falta'],
+        revealHint: '¿Falta algo de la casa? ¿La estatua del vestíbulo?'
       }
     ]
   },
@@ -163,7 +166,8 @@ export const CONTACTS: Contact[] = [
         content:
           'Vi a Víctor entrar al invernadero cerca de las nueve y cincuenta. Llevaba las botas embarradas y no era hora de trabajar.',
         unlocksContactId: 'cook',
-        keywords: ['victor', 'invernadero', 'botas', 'barro', 'nueve', 'cincuenta', 'entrar']
+        keywords: ['victor', 'invernadero', 'botas', 'barro', 'nueve', 'cincuenta', 'entrar'],
+        revealHint: '¿Viste a Víctor cerca del invernadero?'
       },
       {
         id: 'gardener_footprint',
@@ -171,7 +175,8 @@ export const CONTACTS: Contact[] = [
         content:
           'Encontré esta huella junto al ventanal del estudio. Es de bota pesada, como las de Víctor.',
         evidenceId: 'footprint',
-        keywords: ['huella', 'bota', 'ventanal', 'estudio', 'barro']
+        keywords: ['huella', 'bota', 'ventanal', 'estudio', 'barro'],
+        revealHint: '¿Notaste alguna huella de bota junto al ventanal?'
       }
     ]
   },
@@ -199,7 +204,8 @@ export const CONTACTS: Contact[] = [
         content:
           'Preparé tila para don Eduardo a las nueve y media. No olía a veneno; él la tomó sin problemas.',
         unlocksContactId: 'clara',
-        keywords: ['tila', 'infusion', 'nueve', 'media', 'eduardo', 'cocina', 'tomar']
+        keywords: ['tila', 'infusion', 'nueve', 'media', 'eduardo', 'cocina', 'tomar'],
+        revealHint: '¿Le llevaste la infusión a don Eduardo esa noche?'
       },
       {
         id: 'cook_watch',
@@ -207,7 +213,8 @@ export const CONTACTS: Contact[] = [
         content:
           'Oí un golpe seco sobre las diez y cinco. Después vi esta cadena de reloj dorada junto a la puerta del estudio.',
         evidenceId: 'watch_chain',
-        keywords: ['cadena', 'reloj', 'golpe', 'puerta', 'diez', 'dorada']
+        keywords: ['cadena', 'reloj', 'golpe', 'puerta', 'diez', 'dorada'],
+        revealHint: '¿Oíste algún golpe en la puerta del estudio?'
       }
     ]
   },
@@ -235,7 +242,8 @@ export const CONTACTS: Contact[] = [
         content:
           'Desde la biblioteca vi a Víctor salir del estudio a las nueve y cincuenta y cinco con una estatua de bronce en las manos. Dijo que la llevaba al vestíbulo.',
         unlocksContactId: 'victor',
-        keywords: ['biblioteca', 'estudio', 'estatua', 'manos', 'victor', 'salir', 'bronce']
+        keywords: ['biblioteca', 'estudio', 'estatua', 'manos', 'victor', 'salir', 'bronce'],
+        revealHint: '¿Viste algo desde la biblioteca?'
       },
       {
         id: 'clara_letter',
@@ -243,7 +251,8 @@ export const CONTACTS: Contact[] = [
         content:
           'Encontré esta carta en la papelera. Víctor amenazaba a Eduardo con arruinarlo si no cedía la sociedad.',
         evidenceId: 'letter',
-        keywords: ['carta', 'papelera', 'sociedad', 'arruinar', 'amenaza', 'amenazar']
+        keywords: ['carta', 'papelera', 'sociedad', 'arruinar', 'amenaza', 'amenazar'],
+        revealHint: '¿Encontraste alguna carta en la papelera?'
       }
     ]
   },
@@ -269,14 +278,16 @@ export const CONTACTS: Contact[] = [
         id: 'victor_near_study',
         minTrust: 70,
         content: 'Estuve cerca del estudio, sí. Pero solo fui a hablar con Eduardo. No le toqué.',
-        keywords: ['estudio', 'hablar', 'eduardo', 'cerca', 'jardin', 'fumar']
+        keywords: ['estudio', 'hablar', 'eduardo', 'cerca', 'jardin', 'fumar'],
+        revealHint: '¿Estuviste cerca del estudio en algún momento?'
       },
       {
         id: 'victor_confession',
         minTrust: 88,
         content:
           'Vale... la estatua se me fue de las manos durante la discusión. No planeé matarlo. Lo dejé en el sofá y salí por la ventana.',
-        keywords: ['estatua', 'manos', 'discusion', 'confesar', 'sofa', 'ventana', 'planear']
+        keywords: ['estatua', 'manos', 'discusion', 'confesar', 'sofa', 'ventana', 'planear'],
+        revealHint: '¿Qué pasó con la estatua durante la discusión?'
       }
     ]
   }

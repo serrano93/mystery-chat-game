@@ -1,7 +1,15 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { CONTACTS, EVIDENCE, SOLUTION } from '../data/case';
-import { checkWebGPU, generateReply, initWebLLM } from '../lib/ai';
+import { CONTACTS, EVIDENCE } from '../data/case';
+import { INITIAL_MISSIONS } from '../data/missions';
+import {
+  checkWebGPU,
+  generateReply,
+  initWebLLM,
+  summarizeConversation
+} from '../lib/ai';
+import { confrontationResponse, detectConfrontation, maybeRecordClaim } from '../lib/claims';
+import { evaluateEnding, isCorrectAccusation } from '../lib/endings';
 import {
   analyzeMessage,
   clampTrust,
@@ -9,15 +17,22 @@ import {
   contactMap,
   fallbackReply
 } from '../lib/logic';
+import { createHeuristicMemory } from '../lib/memory';
+import { processMissions } from '../lib/missions';
 import type {
   AIStatus,
   Accusation,
   Attachment,
+  Claim,
   ContactState,
+  MemoryNote,
   Message,
+  Mission,
   SecretUpdate
 } from '../types';
 import { now, uid } from '../utils/id';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface GameStore {
   contacts: Record<string, ContactState>;
@@ -25,6 +40,10 @@ interface GameStore {
   unread: Record<string, number>;
   revealedSecretIds: string[];
   evidenceOwned: string[];
+
+  missions: Mission[];
+  claims: Claim[];
+  memories: Record<string, MemoryNote>;
 
   activeContactId: string | null;
   typingContactId: string | null;
@@ -37,10 +56,12 @@ interface GameStore {
   theme: 'dark' | 'light';
 
   showAccuse: boolean;
+  showMissions: boolean;
   accusation: Accusation | null;
   solved: boolean;
   gameOver: boolean;
   failedAttempts: number;
+  endingId: string | null;
 
   initAI: (force?: boolean) => Promise<void>;
   skipAI: () => void;
@@ -54,7 +75,9 @@ interface GameStore {
 
   toggleTheme: () => void;
   setShowAccuse: (show: boolean) => void;
+  setShowMissions: (show: boolean) => void;
   accuse: (accusation: Accusation) => void;
+  syncMissions: () => void;
   resetGame: () => void;
 }
 
@@ -93,18 +116,32 @@ function createInitialState() {
     unread,
     revealedSecretIds: [] as string[],
     evidenceOwned: [] as string[],
+
+    missions: INITIAL_MISSIONS.map((mission) => ({
+      ...mission,
+      active: mission.activation.kind === 'start',
+      completed: false
+    })),
+    claims: [] as Claim[],
+    memories: {} as Record<string, MemoryNote>,
+
     activeContactId: null as string | null,
     typingContactId: null as string | null,
+
     aiStatus: 'idle' as AIStatus,
     aiProgress: 0,
     aiStatusText: '',
     useFallback: false,
+
     theme: 'dark' as const,
+
     showAccuse: false,
+    showMissions: false,
     accusation: null as Accusation | null,
     solved: false,
     gameOver: false,
-    failedAttempts: 0
+    failedAttempts: 0,
+    endingId: null as string | null
   };
 }
 
@@ -138,7 +175,9 @@ export const useGameStore = create<GameStore>()(
               }
             ];
 
-            unread[id] = (unread[id] ?? 0) + 1;
+            if (state.activeContactId !== id) {
+              unread[id] = (unread[id] ?? 0) + 1;
+            }
 
             messages[contactId] = [
               ...(messages[contactId] ?? []),
@@ -168,6 +207,162 @@ export const useGameStore = create<GameStore>()(
         });
       };
 
+      const refreshMemory = async (contactId: string) => {
+        try {
+          const state = get();
+          const contact = contactMap[contactId];
+          if (!contact) return;
+
+          const history = state.messages[contactId] ?? [];
+          const trust = state.contacts[contactId]?.trust ?? 0;
+          const claims = state.claims.filter((c) => c.contactId === contactId);
+          const previous = state.memories[contactId];
+
+          // La historia arranca con el mensaje de apertura (1) y crece de dos en dos,
+          // así que la paridad nunca llega a 0. Se cuenta cuántos mensajes nuevos hay
+          // desde la última nota de memoria en lugar de mirar el total.
+          const previousCount = previous?.messageCount ?? 0;
+          const shouldUseLLM =
+            state.aiStatus === 'ready' &&
+            !state.useFallback &&
+            history.length >= 8 &&
+            history.length - previousCount >= 8;
+
+          let summaryOverride: string | null = null;
+
+          if (shouldUseLLM) {
+            summaryOverride = await summarizeConversation({
+              contactName: contact.name,
+              history,
+              trust
+            });
+          }
+
+          const note = createHeuristicMemory({
+            contact,
+            history,
+            trust,
+            claims,
+            previous,
+            summaryOverride
+          });
+
+          set((prev) => ({
+            memories: {
+              ...prev.memories,
+              [contactId]: note
+            }
+          }));
+        } catch (error) {
+          console.warn('Memory refresh failed:', error);
+        }
+      };
+
+      const handleConfrontation = async (
+        contactId: string,
+        content: string,
+        confrontation: NonNullable<ReturnType<typeof detectConfrontation>>
+      ) => {
+        const state = get();
+        const contact = contactMap[contactId];
+        const contactState = state.contacts[contactId];
+
+        if (!contact || !contactState?.unlocked || state.typingContactId || state.gameOver) {
+          return;
+        }
+
+        const { claim, canonical, success, evidenceUsed } = confrontation;
+        const currentTrust = contactState.trust;
+
+        const delta = success ? (evidenceUsed ? 9 : 5) : claim.truth === 'truth' ? -9 : -15;
+
+        const newTrust = clampTrust(currentTrust + delta);
+
+        const userMessage: Message = {
+          id: uid(),
+          role: 'user',
+          content,
+          timestamp: now(),
+          status: 'sent'
+        };
+
+        set((prev) => ({
+          messages: {
+            ...prev.messages,
+            [contactId]: [...(prev.messages[contactId] ?? []), userMessage]
+          },
+          contacts: {
+            ...prev.contacts,
+            [contactId]: { ...contactState, trust: newTrust }
+          },
+          typingContactId: contactId,
+          unread: {
+            ...prev.unread,
+            [contactId]: 0
+          }
+        }));
+
+        const startedAt = Date.now();
+
+        const reply = confrontationResponse({
+          contact,
+          claim,
+          canonical,
+          success,
+          trust: newTrust,
+          evidenceUsed
+        });
+
+        const minDelay = Math.min(2400, 700 + reply.length * 14);
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < minDelay) {
+          await sleep(minDelay - elapsed);
+        }
+
+        const npcMessage: Message = {
+          id: uid(),
+          role: 'npc',
+          content: reply,
+          timestamp: now(),
+          status: 'read'
+        };
+
+        set((prev) => {
+          const existing = prev.messages[contactId] ?? [];
+          const updated = existing.map((m) =>
+            m.role === 'user' ? { ...m, status: 'read' as const } : m
+          );
+
+          const claims = success
+            ? prev.claims.map((c) => (c.id === claim.id ? { ...c, exposed: true } : c))
+            : prev.claims;
+
+          return {
+            messages: {
+              ...prev.messages,
+              [contactId]: [...updated, npcMessage]
+            },
+            claims,
+            typingContactId: null
+          };
+        });
+
+        const updates = collectSecretUpdates(
+          contactId,
+          newTrust,
+          get().revealedSecretIds,
+          get().evidenceOwned,
+          get().contacts
+        );
+
+        if (updates.messages.length || updates.evidenceIds.length || updates.unlockIds.length) {
+          applySecretUpdates(contactId, updates);
+        }
+
+        void refreshMemory(contactId);
+        get().syncMissions();
+      };
+
       const handlePlayerMessage = async (
         contactId: string,
         content: string,
@@ -179,6 +374,19 @@ export const useGameStore = create<GameStore>()(
         const contactState = state.contacts[contactId];
 
         if (!contact || !contactState?.unlocked || state.typingContactId || state.gameOver) {
+          return;
+        }
+
+        const confrontation = detectConfrontation({
+          text: content,
+          contactId,
+          claims: state.claims,
+          evidenceOwned: state.evidenceOwned,
+          contacts: state.contacts
+        });
+
+        if (confrontation && !attachment) {
+          await handleConfrontation(contactId, content, confrontation);
           return;
         }
 
@@ -210,10 +418,13 @@ export const useGameStore = create<GameStore>()(
           }
         }));
 
+        const startedAt = Date.now();
         let reply = '';
 
         try {
           const history = get().messages[contactId] ?? [];
+          const memory = get().memories[contactId];
+          const claims = get().claims.filter((c) => c.contactId === contactId);
 
           if (get().aiStatus === 'ready' && !get().useFallback) {
             reply = await generateReply({
@@ -222,7 +433,9 @@ export const useGameStore = create<GameStore>()(
               history,
               userMessage: content,
               tags: analysis.tags,
-              attachmentTitle: attachment?.title
+              attachmentTitle: attachment?.title,
+              memory,
+              claims
             });
           } else {
             reply = fallbackReply({
@@ -256,6 +469,12 @@ export const useGameStore = create<GameStore>()(
           });
         }
 
+        const minDelay = Math.min(2400, 650 + reply.length * 14);
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < minDelay) {
+          await sleep(minDelay - elapsed);
+        }
+
         const npcMessage: Message = {
           id: uid(),
           role: 'npc',
@@ -279,6 +498,21 @@ export const useGameStore = create<GameStore>()(
           };
         });
 
+        const claim = maybeRecordClaim({
+          contact,
+          reply,
+          tags: analysis.tags,
+          trust: newTrust,
+          evidenceOwned: get().evidenceOwned,
+          claims: get().claims
+        });
+
+        if (claim) {
+          set((prev) => ({
+            claims: [...prev.claims, claim]
+          }));
+        }
+
         const updates = collectSecretUpdates(
           contactId,
           newTrust,
@@ -290,6 +524,9 @@ export const useGameStore = create<GameStore>()(
         if (updates.messages.length || updates.evidenceIds.length || updates.unlockIds.length) {
           applySecretUpdates(contactId, updates);
         }
+
+        void refreshMemory(contactId);
+        get().syncMissions();
       };
 
       return {
@@ -418,19 +655,84 @@ export const useGameStore = create<GameStore>()(
           set({ showAccuse: show });
         },
 
-        accuse: (accusation) => {
-          const correct =
-            accusation.suspectId === SOLUTION.suspectId &&
-            accusation.weaponId === SOLUTION.weaponId &&
-            accusation.roomId === SOLUTION.roomId;
+        setShowMissions: (show) => {
+          set({ showMissions: show });
+        },
 
-          set((state) => ({
-            accusation,
-            showAccuse: false,
-            solved: correct,
-            gameOver: !correct && state.failedAttempts + 1 >= 3,
-            failedAttempts: correct ? state.failedAttempts : state.failedAttempts + 1
-          }));
+        accuse: (accusation) => {
+          const state = get();
+          const correct = isCorrectAccusation(accusation);
+
+          if (correct) {
+            const ending = evaluateEnding(accusation, state, true);
+            set({
+              accusation,
+              showAccuse: false,
+              solved: true,
+              gameOver: true,
+              endingId: ending.id
+            });
+          } else {
+            const failedAttempts = state.failedAttempts + 1;
+
+            if (failedAttempts >= 3) {
+              const ending = evaluateEnding(accusation, state, false);
+              set({
+                accusation,
+                showAccuse: false,
+                failedAttempts,
+                gameOver: true,
+                endingId: ending.id
+              });
+            } else {
+              const attemptsLeft = 3 - failedAttempts;
+              const message = `Esa acusación no se sostiene. Te quedan ${attemptsLeft} intento${attemptsLeft === 1 ? '' : 's'}.`;
+
+              set((prev) => ({
+                accusation,
+                showAccuse: false,
+                failedAttempts,
+                messages: {
+                  ...prev.messages,
+                  inspector: [
+                    ...(prev.messages.inspector ?? []),
+                    {
+                      id: uid(),
+                      role: 'system',
+                      content: message,
+                      timestamp: now()
+                    }
+                  ]
+                },
+                unread: {
+                  ...prev.unread,
+                  inspector: (prev.unread.inspector ?? 0) + 1
+                }
+              }));
+            }
+          }
+
+          get().syncMissions();
+        },
+
+        syncMissions: () => {
+          try {
+            set((state) =>
+              processMissions({
+                missions: state.missions,
+                messages: state.messages,
+                contacts: state.contacts,
+                evidenceOwned: state.evidenceOwned,
+                unread: state.unread,
+                revealedSecretIds: state.revealedSecretIds,
+                claims: state.claims,
+                solved: state.solved,
+                activeContactId: state.activeContactId
+              })
+            );
+          } catch (error) {
+            console.error('Mission sync failed:', error);
+          }
         },
 
         resetGame: () => {
@@ -442,25 +744,31 @@ export const useGameStore = create<GameStore>()(
             aiProgress: state.aiProgress,
             aiStatusText: state.aiStatusText
           }));
+
+          get().syncMissions();
         }
       };
     },
     {
-      name: 'mystery-whatsapp-v1',
-      version: 1,
+      name: 'mystery-whatsapp-v2',
+      version: 2,
       partialize: (state) => ({
         contacts: state.contacts,
         messages: state.messages,
         unread: state.unread,
         revealedSecretIds: state.revealedSecretIds,
         evidenceOwned: state.evidenceOwned,
+        missions: state.missions,
+        claims: state.claims,
+        memories: state.memories,
         activeContactId: state.activeContactId,
         theme: state.theme,
         useFallback: state.useFallback,
         solved: state.solved,
         gameOver: state.gameOver,
         failedAttempts: state.failedAttempts,
-        accusation: state.accusation
+        accusation: state.accusation,
+        endingId: state.endingId
       })
     }
   )

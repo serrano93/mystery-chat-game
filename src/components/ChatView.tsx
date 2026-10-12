@@ -1,4 +1,4 @@
-import { ArrowLeft, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, ClipboardList, ShieldAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef } from 'react';
 import { contactMap } from '../lib/logic';
 import { useGameStore } from '../store/useGameStore';
@@ -16,6 +16,7 @@ export function ChatView() {
   const typingContactId = useGameStore((s) => s.typingContactId);
   const aiStatus = useGameStore((s) => s.aiStatus);
   const setShowAccuse = useGameStore((s) => s.setShowAccuse);
+  const setShowMissions = useGameStore((s) => s.setShowMissions);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -58,6 +59,14 @@ export function ChatView() {
             {statusText}
           </p>
         </div>
+
+        <button
+          onClick={() => setShowMissions(true)}
+          className="rounded-full p-2 transition hover:bg-white/10"
+          title="Misiones"
+        >
+          <ClipboardList className="h-5 w-5" />
+        </button>
 
         <button
           onClick={() => setShowAccuse(true)}

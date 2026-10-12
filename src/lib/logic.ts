@@ -1,6 +1,7 @@
 import { CONTACTS, EVIDENCE } from '../data/case';
 import type { Contact, ContactState, Message, SecretUpdate } from '../types';
 import { now, uid } from '../utils/id';
+import { includesAny, normalize } from './text';
 
 export const contactMap: Record<string, Contact> = Object.fromEntries(
   CONTACTS.map((c) => [c.id, c])
@@ -8,20 +9,6 @@ export const contactMap: Record<string, Contact> = Object.fromEntries(
 
 export function clampTrust(value: number): number {
   return Math.max(0, Math.min(100, value));
-}
-
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s?]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function includesAny(norm: string, words: string[]): boolean {
-  return words.some((word) => norm.includes(word));
 }
 
 export interface MessageAnalysis {
@@ -203,7 +190,7 @@ function pick<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
-function trustBucket(trust: number): 'low' | 'medium' | 'high' {
+export function trustBucket(trust: number): 'low' | 'medium' | 'high' {
   if (trust < 35) return 'low';
   if (trust < 70) return 'medium';
   return 'high';

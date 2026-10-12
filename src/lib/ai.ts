@@ -1,5 +1,6 @@
-import type { ReplyParams } from '../types';
+import type { Message, ReplyParams } from '../types';
 import { fallbackReply } from './logic';
+import { buildMemoryPrompt } from './memory';
 
 let engine: any = null;
 let initPromise: Promise<any> | null = null;
@@ -18,6 +19,10 @@ export async function checkWebGPU(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export function getEngine() {
+  return engine;
 }
 
 export async function initWebLLM(
@@ -49,6 +54,30 @@ export async function initWebLLM(
   return initPromise;
 }
 
+function cleanReply(raw: string | undefined, contactName?: string): string {
+  if (!raw) return '';
+
+  let text = raw.replace(/\r/g, '').trim();
+
+  if (contactName) {
+    const nameRegex = new RegExp(
+      `^${contactName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`,
+      'i'
+    );
+    text = text.replace(nameRegex, '');
+  }
+
+  text = text.replace(/^["'“”]+|["'“”]+$/g, '');
+  text = text.replace(/\*\*/g, '');
+  text = text.replace(/\n{2,}/g, '\n');
+
+  if (text.length > 280) {
+    text = `${text.slice(0, 280).replace(/(\s\S*)?$/, '')}…`;
+  }
+
+  return text;
+}
+
 function buildMessages(params: ReplyParams) {
   const recent = params.history
     .filter((m) => m.role !== 'system')
@@ -58,6 +87,8 @@ function buildMessages(params: ReplyParams) {
       content: m.content
     }));
 
+  const memoryBlock = buildMemoryPrompt(params.memory, params.claims);
+
   const system = `
 Eres ${params.contact.name}, ${params.contact.role}.
 Biografía: ${params.contact.bio}
@@ -65,7 +96,10 @@ Personalidad: ${params.contact.personality}
 Alibi privado: ${params.contact.alibi}
 Confianza actual del jugador: ${params.trust}/100.
 
-Reglas obligatorias:
+MEMORIA PRIVADA (no la menciones como lista; úsala de forma natural):
+${memoryBlock || 'Sin notas relevantes.'}
+
+REGLAS OBLIGATORIAS:
 - Responde en español, como un chat móvil.
 - Máximo 2 frases cortas.
 - Sé coherente con tu carácter.
@@ -74,6 +108,9 @@ Reglas obligatorias:
 - Si el jugador pregunta por secretos, responde con evasivas naturales.
 - No inventes personas, lugares ni armas nuevas.
 - No uses markdown, comillas innecesarias ni prefijos con tu nombre.
+- Si tienes afirmaciones previas, no te contradigas salvo que hayas sido descubierto.
+- Si una mentira tuya fue descubierta, admite la verdad correspondiente o muestra arrepentimiento/coherencia con tu carácter.
+- Puedes recordar de forma humana: "Ahora que lo recuerdo...", "Sigue dándome vueltas...", "No olvido que me dijiste...". Nunca digas "según mis notas".
 `.trim();
 
   const userContent = params.attachmentTitle
@@ -87,25 +124,6 @@ Reglas obligatorias:
   ];
 }
 
-function cleanReply(raw: string | undefined, contactName: string): string {
-  if (!raw) return '';
-
-  let text = raw.replace(/\r/g, '').trim();
-
-  const nameRegex = new RegExp(`^${contactName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i');
-  text = text.replace(nameRegex, '');
-
-  text = text.replace(/^["'“”]+|["'“”]+$/g, '');
-  text = text.replace(/\*\*/g, '');
-  text = text.replace(/\n{2,}/g, '\n');
-
-  if (text.length > 260) {
-    text = `${text.slice(0, 260).replace(/(\s\S*)?$/, '')}…`;
-  }
-
-  return text;
-}
-
 export async function generateReply(params: ReplyParams): Promise<string> {
   if (!engine) {
     return fallbackReply(params);
@@ -115,7 +133,7 @@ export async function generateReply(params: ReplyParams): Promise<string> {
     const response = await engine.chat.completions.create({
       messages: buildMessages(params),
       temperature: 0.75,
-      max_tokens: 140,
+      max_tokens: 160,
       stream: false
     });
 
@@ -125,5 +143,48 @@ export async function generateReply(params: ReplyParams): Promise<string> {
     return cleaned || fallbackReply(params);
   } catch {
     return fallbackReply(params);
+  }
+}
+
+export async function summarizeConversation(params: {
+  contactName: string;
+  history: Message[];
+  trust: number;
+}): Promise<string | null> {
+  if (!engine) return null;
+
+  const transcript = params.history
+    .slice(-12)
+    .map((m) => `${m.role === 'user' ? 'Jugador' : params.contactName}: ${m.content}`)
+    .join('\n');
+
+  const prompt = `
+Resume en español, en 2 frases cortas, lo esencial de la conversación entre el jugador y ${params.contactName}.
+Incluye promesas, sospechas, emociones y posibles contradicciones.
+Confianza actual: ${params.trust}/100.
+No des consejo. Solo notas privadas para un NPC.
+
+Transcript:
+${transcript}
+`.trim();
+
+  try {
+    const response = await engine.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Eres un motor de memoria privada para un juego narrativo. Resumes con precisión y naturalidad.'
+        },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2,
+      max_tokens: 110,
+      stream: false
+    });
+
+    return cleanReply(response?.choices?.[0]?.message?.content);
+  } catch {
+    return null;
   }
 }

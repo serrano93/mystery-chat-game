@@ -6,6 +6,7 @@ interface AvatarProps {
   color: string;
   locked?: boolean;
   size?: 'sm' | 'md' | 'lg';
+  src?: string;
 }
 
 function getInitials(name: string) {
@@ -18,12 +19,25 @@ function getInitials(name: string) {
     .toUpperCase();
 }
 
-export function Avatar({ name, color, locked = false, size = 'md' }: AvatarProps) {
+export function Avatar({ name, color, locked = false, size = 'md', src }: AvatarProps) {
   const sizeClasses = {
     sm: 'h-9 w-9 text-xs',
     md: 'h-12 w-12 text-sm',
     lg: 'h-14 w-14 text-base'
   }[size];
+
+  if (src && !locked) {
+    return (
+      <img
+        src={src}
+        alt={name}
+        className={cn(
+          'shrink-0 rounded-full object-cover shadow-md ring-2 ring-white/20',
+          sizeClasses
+        )}
+      />
+    );
+  }
 
   return (
     <div

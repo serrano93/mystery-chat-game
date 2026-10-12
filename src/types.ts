@@ -17,6 +17,9 @@ export interface Message {
   timestamp: number;
   attachment?: Attachment;
   status?: 'sent' | 'read';
+  meta?: {
+    kind?: 'memory' | 'claim' | 'mission';
+  };
 }
 
 export interface Evidence {
@@ -34,6 +37,7 @@ export interface Secret {
   content: string;
   evidenceId?: string;
   unlocksContactId?: string;
+  claimTopic?: ClaimTopic;
 }
 
 export type Temperament = 'formal' | 'nervous' | 'warm' | 'hostile' | 'calculated';
@@ -48,6 +52,7 @@ export interface Contact {
   temperament: Temperament;
   opening: string;
   color: string;
+  avatarUrl?: string;
   initiallyUnlocked?: boolean;
   secrets: Secret[];
 }
@@ -76,6 +81,76 @@ export interface Accusation {
 
 export type AIStatus = 'idle' | 'loading' | 'ready' | 'fallback' | 'unsupported' | 'error';
 
+export type ClaimTopic =
+  | 'alibi'
+  | 'argument'
+  | 'victor_greenhouse'
+  | 'tea'
+  | 'watch'
+  | 'saw_victor'
+  | 'letter'
+  | 'statue'
+  | 'window';
+
+export interface Claim {
+  id: string;
+  contactId: string;
+  topic: ClaimTopic;
+  statement: string;
+  truth: 'truth' | 'lie' | 'partial';
+  exposed: boolean;
+  createdAt: number;
+}
+
+export interface MemoryNote {
+  contactId: string;
+  summary: string;
+  facts: string[];
+  tone: 'neutral' | 'tense' | 'trusting' | 'hostile';
+  updatedAt: number;
+  messageCount: number;
+}
+
+export type MissionObjective =
+  | { kind: 'trust'; contactId: string; value: number }
+  | { kind: 'evidence'; evidenceId: string }
+  | { kind: 'secret'; secretId: string }
+  | { kind: 'unlock'; contactId: string }
+  | { kind: 'expose_claim'; contactId: string; topic: ClaimTopic }
+  | { kind: 'accusation_correct' };
+
+export interface MissionActivation {
+  kind: 'start' | 'secret_revealed' | 'contact_unlocked' | 'evidence_collected' | 'claim_exposed';
+  id?: string;
+}
+
+export interface MissionReward {
+  trust?: Record<string, number>;
+  evidenceId?: string;
+  unlockContactId?: string;
+  message?: string;
+}
+
+export interface Mission {
+  id: string;
+  title: string;
+  description: string;
+  objective: MissionObjective;
+  activation: MissionActivation;
+  active: boolean;
+  completed: boolean;
+  reward?: MissionReward;
+}
+
+export interface Ending {
+  id: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  grade: string;
+  correct: boolean;
+}
+
 export interface ReplyParams {
   contact: Contact;
   trust: number;
@@ -83,6 +158,8 @@ export interface ReplyParams {
   userMessage: string;
   tags: string[];
   attachmentTitle?: string;
+  memory?: MemoryNote;
+  claims?: Claim[];
 }
 
 export interface SecretUpdate {

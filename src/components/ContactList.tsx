@@ -1,4 +1,4 @@
-import { ChevronRight, Lock, Moon, RotateCcw, ShieldAlert, Sun } from 'lucide-react';
+import { ChevronRight, ClipboardList, Lock, Moon, RotateCcw, ShieldAlert, Sun } from 'lucide-react';
 import { CONTACTS } from '../data/case';
 import { useGameStore } from '../store/useGameStore';
 import type { Message } from '../types';
@@ -20,6 +20,7 @@ export function ContactList() {
   const toggleTheme = useGameStore((s) => s.toggleTheme);
   const resetGame = useGameStore((s) => s.resetGame);
   const setShowAccuse = useGameStore((s) => s.setShowAccuse);
+  const setShowMissions = useGameStore((s) => s.setShowMissions);
   const theme = useGameStore((s) => s.theme);
   const aiStatus = useGameStore((s) => s.aiStatus);
   const aiStatusText = useGameStore((s) => s.aiStatusText);
@@ -37,6 +38,13 @@ export function ContactList() {
           </div>
 
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowMissions(true)}
+              className="rounded-full p-2 text-slate-200 transition hover:bg-white/10"
+              title="Misiones"
+            >
+              <ClipboardList className="h-5 w-5" />
+            </button>
             <button
               onClick={toggleTheme}
               className="rounded-full p-2 text-slate-200 transition hover:bg-white/10"

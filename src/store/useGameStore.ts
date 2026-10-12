@@ -2,23 +2,22 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { CONTACTS, EVIDENCE } from '../data/case';
 import { INITIAL_MISSIONS } from '../data/missions';
+import { MODEL_TIERS, resolveTier, setStoredTier } from '../data/settings';
 import {
   checkWebGPU,
+  generateConfrontationReply,
   generateReply,
+  generateSecretFollowUpReply,
   initWebLLM,
   summarizeConversation
 } from '../lib/ai';
-import { confrontationResponse, detectConfrontation, maybeRecordClaim } from '../lib/claims';
+import { detectConfrontation, maybeRecordClaim } from '../lib/claims';
 import { evaluateEnding, isCorrectAccusation } from '../lib/endings';
-import {
-  analyzeMessage,
-  clampTrust,
-  collectSecretUpdates,
-  contactMap,
-  fallbackReply
-} from '../lib/logic';
+import { analyzeTurn } from '../lib/intents';
+import { analyzeMessage, clampTrust, contactMap } from '../lib/logic';
 import { createHeuristicMemory } from '../lib/memory';
 import { processMissions } from '../lib/missions';
+import { getAvailableSecrets, pickSecretToReveal } from '../lib/secrets';
 import type {
   AIStatus,
   Accusation,
@@ -28,7 +27,8 @@ import type {
   MemoryNote,
   Message,
   Mission,
-  SecretUpdate
+  ModelTier,
+  Secret
 } from '../types';
 import { now, uid } from '../utils/id';
 
@@ -52,6 +52,7 @@ interface GameStore {
   aiProgress: number;
   aiStatusText: string;
   useFallback: boolean;
+  aiTier: ModelTier;
 
   theme: 'dark' | 'light';
 
@@ -64,6 +65,7 @@ interface GameStore {
   endingId: string | null;
 
   initAI: (force?: boolean) => Promise<void>;
+  setAITier: (tier: ModelTier) => void;
   skipAI: () => void;
   retryAI: () => void;
 
@@ -132,6 +134,7 @@ function createInitialState() {
     aiProgress: 0,
     aiStatusText: '',
     useFallback: false,
+    aiTier: resolveTier(),
 
     theme: 'dark' as const,
 
@@ -148,61 +151,67 @@ function createInitialState() {
 export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => {
-      const applySecretUpdates = (contactId: string, updates: SecretUpdate) => {
+      const humanDelay = (text: string, min = 650, max = 2400) =>
+        Math.min(max, min + text.length * 13 + Math.floor(Math.random() * 280));
+
+      const applySecretReveal = (contactId: string, secret: Secret) => {
         set((state) => {
           const messages = { ...state.messages };
           const contacts = { ...state.contacts };
           const unread = { ...state.unread };
-
-          messages[contactId] = [...(messages[contactId] ?? []), ...updates.messages];
-
-          updates.unlockIds.forEach((id) => {
-            if (contacts[id]?.unlocked) return;
-
-            const definition = contactMap[id];
-            if (!definition) return;
-
-            contacts[id] = { unlocked: true, trust: 15 };
-
-            messages[id] = [
-              ...(messages[id] ?? []),
-              {
-                id: uid(),
-                role: 'npc',
-                content: definition.opening,
-                timestamp: now(),
-                status: 'read'
-              }
-            ];
-
-            if (state.activeContactId !== id) {
-              unread[id] = (unread[id] ?? 0) + 1;
-            }
-
-            messages[contactId] = [
-              ...(messages[contactId] ?? []),
-              {
-                id: uid(),
-                role: 'system',
-                content: `Nuevo contacto desbloqueado: ${definition.name}.`,
-                timestamp: now()
-              }
-            ];
-          });
-
           const evidenceOwned = [...state.evidenceOwned];
-          updates.evidenceIds.forEach((evidenceId) => {
-            if (!evidenceOwned.includes(evidenceId)) {
-              evidenceOwned.push(evidenceId);
+
+          const revealedSecretIds = state.revealedSecretIds.includes(secret.id)
+            ? state.revealedSecretIds
+            : [...state.revealedSecretIds, secret.id];
+
+          if (secret.evidenceId && !evidenceOwned.includes(secret.evidenceId)) {
+            evidenceOwned.push(secret.evidenceId);
+          }
+
+          if (secret.unlocksContactId) {
+            const targetId = secret.unlocksContactId;
+
+            if (!contacts[targetId]?.unlocked) {
+              const definition = contactMap[targetId];
+
+              if (definition) {
+                contacts[targetId] = { unlocked: true, trust: 15 };
+
+                messages[targetId] = [
+                  ...(messages[targetId] ?? []),
+                  {
+                    id: uid(),
+                    role: 'npc',
+                    content: definition.opening,
+                    timestamp: now(),
+                    status: 'read'
+                  }
+                ];
+
+                if (state.activeContactId !== targetId) {
+                  unread[targetId] = (unread[targetId] ?? 0) + 1;
+                }
+
+                messages[contactId] = [
+                  ...(messages[contactId] ?? []),
+                  {
+                    id: uid(),
+                    role: 'system',
+                    content: `Nuevo contacto desbloqueado: ${definition.name}.`,
+                    timestamp: now()
+                  }
+                ];
+              }
             }
-          });
+          }
 
           return {
             messages,
             contacts,
             unread,
             evidenceOwned,
-            revealedSecretIds: updates.revealedIds
+            revealedSecretIds
           };
         });
       };
@@ -218,9 +227,9 @@ export const useGameStore = create<GameStore>()(
           const claims = state.claims.filter((c) => c.contactId === contactId);
           const previous = state.memories[contactId];
 
-          // La historia arranca con el mensaje de apertura (1) y crece de dos en dos,
-          // así que la paridad nunca llega a 0. Se cuenta cuántos mensajes nuevos hay
-          // desde la última nota de memoria en lugar de mirar el total.
+          // La historia arranca con el mensaje de apertura (1) y crece de dos en
+          // dos, así que la paridad nunca llega a 0. Se cuentan los mensajes
+          // nuevos desde la última nota en lugar de mirar el total.
           const previousCount = previous?.messageCount ?? 0;
           const shouldUseLLM =
             state.aiStatus === 'ready' &&
@@ -271,6 +280,10 @@ export const useGameStore = create<GameStore>()(
           return;
         }
 
+        // Historial previo al mensaje actual: el turno del jugador se envía
+        // aparte y anotado, así que no debe aparecer también en el historial.
+        const historyBefore = state.messages[contactId] ?? [];
+
         const { claim, canonical, success, evidenceUsed } = confrontation;
         const currentTrust = contactState.trust;
 
@@ -304,19 +317,21 @@ export const useGameStore = create<GameStore>()(
 
         const startedAt = Date.now();
 
-        const reply = confrontationResponse({
+        const reply = await generateConfrontationReply({
           contact,
+          trust: newTrust,
           claim,
           canonical,
           success,
-          trust: newTrust,
-          evidenceUsed
+          evidenceUsed,
+          memory: get().memories[contactId],
+          history: historyBefore
         });
 
-        const minDelay = Math.min(2400, 700 + reply.length * 14);
+        const wait = humanDelay(reply, 750, 2600);
         const elapsed = Date.now() - startedAt;
-        if (elapsed < minDelay) {
-          await sleep(minDelay - elapsed);
+        if (elapsed < wait) {
+          await sleep(wait - elapsed);
         }
 
         const npcMessage: Message = {
@@ -346,18 +361,6 @@ export const useGameStore = create<GameStore>()(
             typingContactId: null
           };
         });
-
-        const updates = collectSecretUpdates(
-          contactId,
-          newTrust,
-          get().revealedSecretIds,
-          get().evidenceOwned,
-          get().contacts
-        );
-
-        if (updates.messages.length || updates.evidenceIds.length || updates.unlockIds.length) {
-          applySecretUpdates(contactId, updates);
-        }
 
         void refreshMemory(contactId);
         get().syncMissions();
@@ -390,7 +393,11 @@ export const useGameStore = create<GameStore>()(
           return;
         }
 
+        // Historial previo al mensaje actual (ver handleConfrontation).
+        const historyBefore = state.messages[contactId] ?? [];
+
         const analysis = analyzeMessage(content, contact, evidenceId);
+        const turn = analyzeTurn(content, evidenceId);
         const newTrust = clampTrust(contactState.trust + analysis.trustDelta);
 
         const userMessage: Message = {
@@ -419,60 +426,26 @@ export const useGameStore = create<GameStore>()(
         }));
 
         const startedAt = Date.now();
-        let reply = '';
 
-        try {
-          const history = get().messages[contactId] ?? [];
-          const memory = get().memories[contactId];
-          const claims = get().claims.filter((c) => c.contactId === contactId);
+        const reply = await generateReply({
+          contact,
+          trust: newTrust,
+          history: historyBefore,
+          userMessage: content,
+          analysis: turn,
+          memory: get().memories[contactId],
+          claims: get().claims.filter((c) => c.contactId === contactId),
+          availableSecrets: getAvailableSecrets(contact, newTrust, get().revealedSecretIds),
+          activeMission: get().missions.find((m) => m.active && !m.completed),
+          evidenceOwned: get().evidenceOwned,
+          tier: get().aiTier,
+          attachmentTitle: attachment?.title
+        });
 
-          if (get().aiStatus === 'ready' && !get().useFallback) {
-            reply = await generateReply({
-              contact,
-              trust: newTrust,
-              history,
-              userMessage: content,
-              tags: analysis.tags,
-              attachmentTitle: attachment?.title,
-              memory,
-              claims
-            });
-          } else {
-            reply = fallbackReply({
-              contact,
-              trust: newTrust,
-              history,
-              userMessage: content,
-              tags: analysis.tags,
-              attachmentTitle: attachment?.title
-            });
-          }
-        } catch {
-          reply = fallbackReply({
-            contact,
-            trust: newTrust,
-            history: get().messages[contactId] ?? [],
-            userMessage: content,
-            tags: analysis.tags,
-            attachmentTitle: attachment?.title
-          });
-        }
-
-        if (!reply) {
-          reply = fallbackReply({
-            contact,
-            trust: newTrust,
-            history: get().messages[contactId] ?? [],
-            userMessage: content,
-            tags: analysis.tags,
-            attachmentTitle: attachment?.title
-          });
-        }
-
-        const minDelay = Math.min(2400, 650 + reply.length * 14);
+        const wait = humanDelay(reply);
         const elapsed = Date.now() - startedAt;
-        if (elapsed < minDelay) {
-          await sleep(minDelay - elapsed);
+        if (elapsed < wait) {
+          await sleep(wait - elapsed);
         }
 
         const npcMessage: Message = {
@@ -494,14 +467,14 @@ export const useGameStore = create<GameStore>()(
               ...prev.messages,
               [contactId]: [...updated, npcMessage]
             },
-            typingContactId: null
+            typingContactId: contactId
           };
         });
 
         const claim = maybeRecordClaim({
           contact,
           reply,
-          tags: analysis.tags,
+          tags: turn.tags,
           trust: newTrust,
           evidenceOwned: get().evidenceOwned,
           claims: get().claims
@@ -513,16 +486,48 @@ export const useGameStore = create<GameStore>()(
           }));
         }
 
-        const updates = collectSecretUpdates(
-          contactId,
-          newTrust,
-          get().revealedSecretIds,
-          get().evidenceOwned,
-          get().contacts
-        );
+        const historyAfter = get().messages[contactId] ?? [];
 
-        if (updates.messages.length || updates.evidenceIds.length || updates.unlockIds.length) {
-          applySecretUpdates(contactId, updates);
+        const secret = pickSecretToReveal({
+          contact,
+          trust: newTrust,
+          revealedIds: get().revealedSecretIds,
+          analysis: turn,
+          userMessage: content,
+          userTurns: historyAfter.filter((m) => m.role === 'user').length
+        });
+
+        if (secret) {
+          await sleep(450 + Math.floor(Math.random() * 900));
+
+          const followUp = await generateSecretFollowUpReply({
+            contact,
+            secret,
+            trust: newTrust,
+            memory: get().memories[contactId]
+          });
+
+          await sleep(humanDelay(followUp, 350, 1500));
+
+          const followMessage: Message = {
+            id: uid(),
+            role: 'npc',
+            content: followUp,
+            timestamp: now(),
+            status: 'read'
+          };
+
+          set((prev) => ({
+            messages: {
+              ...prev.messages,
+              [contactId]: [...(prev.messages[contactId] ?? []), followMessage]
+            },
+            typingContactId: null
+          }));
+
+          applySecretReveal(contactId, secret);
+        } else {
+          set({ typingContactId: null });
         }
 
         void refreshMemory(contactId);
@@ -545,10 +550,12 @@ export const useGameStore = create<GameStore>()(
             return;
           }
 
+          const tier = get().aiTier;
+
           set({
             aiStatus: 'loading',
             aiProgress: 0,
-            aiStatusText: 'Comprobando compatibilidad...'
+            aiStatusText: `Seleccionando modelo ${MODEL_TIERS[tier].label}...`
           });
 
           try {
@@ -563,16 +570,16 @@ export const useGameStore = create<GameStore>()(
               return;
             }
 
-            set({ aiStatusText: 'Descargando modelo local...' });
+            set({ aiStatusText: `Descargando modelo ${MODEL_TIERS[tier].label}...` });
 
-            await initWebLLM((progress, text) => {
+            await initWebLLM(tier, (progress, text) => {
               set({ aiProgress: progress, aiStatusText: text });
             });
 
             set({
               aiStatus: 'ready',
               aiProgress: 1,
-              aiStatusText: 'IA local lista'
+              aiStatusText: `IA local lista (${MODEL_TIERS[tier].label})`
             });
           } catch {
             set({
@@ -581,6 +588,18 @@ export const useGameStore = create<GameStore>()(
               aiStatusText: 'No se pudo cargar la IA local. Usando modo local.'
             });
           }
+        },
+
+        setAITier: (tier) => {
+          setStoredTier(tier);
+          set({
+            aiTier: tier,
+            useFallback: false,
+            aiStatus: 'loading',
+            aiProgress: 0,
+            aiStatusText: `Seleccionando modelo ${MODEL_TIERS[tier].label}...`
+          });
+          void get().initAI(true);
         },
 
         skipAI: () => {
@@ -742,7 +761,8 @@ export const useGameStore = create<GameStore>()(
             useFallback: state.useFallback,
             aiStatus: state.aiStatus,
             aiProgress: state.aiProgress,
-            aiStatusText: state.aiStatusText
+            aiStatusText: state.aiStatusText,
+            aiTier: state.aiTier
           }));
 
           get().syncMissions();
@@ -750,8 +770,8 @@ export const useGameStore = create<GameStore>()(
       };
     },
     {
-      name: 'mystery-whatsapp-v2',
-      version: 2,
+      name: 'mystery-whatsapp-v3',
+      version: 3,
       partialize: (state) => ({
         contacts: state.contacts,
         messages: state.messages,
@@ -764,6 +784,7 @@ export const useGameStore = create<GameStore>()(
         activeContactId: state.activeContactId,
         theme: state.theme,
         useFallback: state.useFallback,
+        aiTier: state.aiTier,
         solved: state.solved,
         gameOver: state.gameOver,
         failedAttempts: state.failedAttempts,

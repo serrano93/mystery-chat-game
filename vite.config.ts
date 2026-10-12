@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icons/*.png'],
+      includeAssets: ['apple-touch-icon.png'],
       manifest: {
         name: 'Misterio en WhatsApp',
         short_name: 'Misterio WA',
@@ -41,13 +41,27 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,jpg,jpeg,webp,woff2}'],
-        navigateFallback: '/index.html',
-        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024
+        // El motor de IA (~6 MB) se queda fuera del precache: así la primera
+        // visita descarga solo el app shell. Al ser un import dinámico se pide
+        // on-demand y queda cacheado por HTTP (lleva hash y se sirve immutable
+        // durante un año). Se excluye por nombre porque con el límite de tamaño
+        // por defecto (2 MiB) vite-plugin-pwa no avisa: directamente falla el
+        // build. El chunk se llama 'webllm' por el manualChunks de abajo.
+        globIgnores: ['**/webllm-*.js'],
+        navigateFallback: '/index.html'
       }
     })
   ],
   build: {
     target: 'esnext',
-    chunkSizeWarningLimit: 2000
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('@mlc-ai/web-llm')) return 'webllm';
+          return undefined;
+        }
+      }
+    }
   }
 });

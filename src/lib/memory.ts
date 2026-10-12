@@ -2,36 +2,6 @@ import { TOPIC_LABELS } from '../data/claims';
 import type { Claim, Contact, MemoryNote, Message } from '../types';
 import { now } from '../utils/id';
 
-export function buildMemoryPrompt(memory?: MemoryNote, claims: Claim[] = []): string {
-  const lines: string[] = [];
-
-  if (memory) {
-    lines.push(`Resumen privado: ${memory.summary}`);
-
-    if (memory.facts.length) {
-      lines.push(`Hechos recordados: ${memory.facts.slice(-6).join(' | ')}`);
-    }
-
-    lines.push(`Tono emocional actual: ${memory.tone}`);
-  }
-
-  if (claims.length) {
-    const claimLines = claims.slice(-6).map((claim) => {
-      const label = TOPIC_LABELS[claim.topic] ?? claim.topic;
-      const status = claim.exposed
-        ? 'descubierta'
-        : claim.truth === 'lie'
-          ? 'mentira mantenida'
-          : 'verdad dicha';
-      return `[${label}] (${status}): "${claim.statement}"`;
-    });
-
-    lines.push(`Afirmaciones previas: ${claimLines.join(' ; ')}`);
-  }
-
-  return lines.join('\n');
-}
-
 function trustPhrase(trust: number): string {
   if (trust >= 80) return 'confía bastante en ti';
   if (trust >= 60) return 'está empezando a abrirse';

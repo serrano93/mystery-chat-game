@@ -1,11 +1,26 @@
-import type { Message, ReplyParams } from '../types';
-import { fallbackReply } from './logic';
-import { buildMemoryPrompt } from './memory';
+import { MODEL_TIERS } from '../data/settings';
+import type {
+  ConfrontationContext,
+  Message,
+  ModelTier,
+  ReplyContext,
+  SecretFollowUpContext
+} from '../types';
+import {
+  buildConfrontationMessages,
+  buildMessages,
+  buildSecretMessages,
+  type ChatMessage
+} from './context';
+import {
+  contextualFallback,
+  fallbackConfrontation,
+  fallbackSecretFollowUp
+} from './fallback';
 
 let engine: any = null;
 let initPromise: Promise<any> | null = null;
-
-const MODEL_ID = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+let currentTier: ModelTier | null = null;
 
 export async function checkWebGPU(): Promise<boolean> {
   if (typeof navigator === 'undefined') return false;
@@ -21,20 +36,33 @@ export async function checkWebGPU(): Promise<boolean> {
   }
 }
 
-export function getEngine() {
-  return engine;
+export function getCurrentTier(): ModelTier | null {
+  return currentTier;
 }
 
 export async function initWebLLM(
+  tier: ModelTier,
   onProgress: (progress: number, text: string) => void
 ): Promise<any> {
-  if (engine) return engine;
+  if (engine && currentTier === tier) return engine;
+
+  if (engine) {
+    try {
+      await engine.unload?.();
+    } catch {
+      // Si el motor no se deja descargar, se sigue igualmente: se reemplaza.
+    }
+    engine = null;
+    currentTier = null;
+    initPromise = null;
+  }
 
   if (!initPromise) {
     initPromise = (async () => {
       const webllm = await import('@mlc-ai/web-llm');
+      const config = MODEL_TIERS[tier];
 
-      const created = await webllm.CreateMLCEngine(MODEL_ID, {
+      const created = await webllm.CreateMLCEngine(config.id, {
         initProgressCallback: (payload: any) => {
           const progress = typeof payload?.progress === 'number' ? payload.progress : 0;
           const text = typeof payload?.text === 'string' ? payload.text : 'Preparando modelo...';
@@ -44,6 +72,7 @@ export async function initWebLLM(
       });
 
       engine = created;
+      currentTier = tier;
       return engine;
     })().catch((error) => {
       initPromise = null;
@@ -54,7 +83,20 @@ export async function initWebLLM(
   return initPromise;
 }
 
-function cleanReply(raw: string | undefined, contactName?: string): string {
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error('AI_TIMEOUT')), ms);
+    })
+  ]);
+}
+
+function extractContent(response: any): string {
+  return response?.choices?.[0]?.message?.content ?? '';
+}
+
+export function sanitizeReply(raw: string | undefined, contactName?: string): string {
   if (!raw) return '';
 
   let text = raw.replace(/\r/g, '').trim();
@@ -69,80 +111,143 @@ function cleanReply(raw: string | undefined, contactName?: string): string {
 
   text = text.replace(/^["'“”]+|["'“”]+$/g, '');
   text = text.replace(/\*\*/g, '');
+  text = text.replace(/^\s*[-•*]\s+/gm, '');
   text = text.replace(/\n{2,}/g, '\n');
 
-  if (text.length > 280) {
-    text = `${text.slice(0, 280).replace(/(\s\S*)?$/, '')}…`;
+  if (text.length > 320) {
+    text = `${text.slice(0, 320).replace(/(\s\S*)?$/, '')}…`;
   }
 
-  return text;
+  return text.trim();
 }
 
-function buildMessages(params: ReplyParams) {
-  const recent = params.history
-    .filter((m) => m.role !== 'system')
-    .slice(-8)
-    .map((m) => ({
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: m.content
-    }));
+/**
+ * Frases que delatan fuga de meta-información. Se buscan como expresiones
+ * completas y no como palabras sueltas: "confianza", "misión", "modelo" u
+ * "objetivo" son vocabulario normal dentro de un drama de mansión ("mi misión
+ * es proteger esta casa") y vetarlas sueltas tiraría diálogo perfectamente
+ * válido, que es justo lo contrario de lo que busca este motor.
+ */
+const META_LEAK_PATTERNS = [
+  /```/,
+  /\*\*/,
+  /como (ia|lenguaje|modelo|asistente)/i,
+  /\binteligencia artificial\b/i,
+  /\bsoy (una? )?(ia|asistente|chatbot|modelo de lenguaje)\b/i,
+  /\bassistant\b/i,
+  /\bprompt\b/i,
+  /\bnivel de confianza\b/i,
+  /\bconfianza actual\b/i,
+  /\b(el )?objetivo del juego\b/i,
+  /\b(seg[uú]n )?mis (notas|instrucciones)\b/i
+];
 
-  const memoryBlock = buildMemoryPrompt(params.memory, params.claims);
+export function isValidReply(text: string, contactName?: string): boolean {
+  if (!text || text.length < 2 || text.length > 340) return false;
 
-  const system = `
-Eres ${params.contact.name}, ${params.contact.role}.
-Biografía: ${params.contact.bio}
-Personalidad: ${params.contact.personality}
-Alibi privado: ${params.contact.alibi}
-Confianza actual del jugador: ${params.trust}/100.
-
-MEMORIA PRIVADA (no la menciones como lista; úsala de forma natural):
-${memoryBlock || 'Sin notas relevantes.'}
-
-REGLAS OBLIGATORIAS:
-- Responde en español, como un chat móvil.
-- Máximo 2 frases cortas.
-- Sé coherente con tu carácter.
-- Si la confianza es baja, sé evasivo. Si es media, cauteloso. Si es alta, más colaborador.
-- NO reveles secretos del caso ni pruebas que el narrador no te haya asignado.
-- Si el jugador pregunta por secretos, responde con evasivas naturales.
-- No inventes personas, lugares ni armas nuevas.
-- No uses markdown, comillas innecesarias ni prefijos con tu nombre.
-- Si tienes afirmaciones previas, no te contradigas salvo que hayas sido descubierto.
-- Si una mentira tuya fue descubierta, admite la verdad correspondiente o muestra arrepentimiento/coherencia con tu carácter.
-- Puedes recordar de forma humana: "Ahora que lo recuerdo...", "Sigue dándome vueltas...", "No olvido que me dijiste...". Nunca digas "según mis notas".
-`.trim();
-
-  const userContent = params.attachmentTitle
-    ? `${params.userMessage}\n[El jugador adjunta: ${params.attachmentTitle}]`
-    : params.userMessage;
-
-  return [
-    { role: 'system', content: system },
-    ...recent,
-    { role: 'user', content: userContent }
-  ];
-}
-
-export async function generateReply(params: ReplyParams): Promise<string> {
-  if (!engine) {
-    return fallbackReply(params);
+  if (META_LEAK_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
   }
+
+  if (contactName) {
+    const namePrefix = new RegExp(
+      `^${contactName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:`,
+      'i'
+    );
+    if (namePrefix.test(text)) return false;
+  }
+
+  return true;
+}
+
+async function requestChat(
+  messages: ChatMessage[],
+  tier: ModelTier,
+  temperature = 0.82,
+  maxTokens?: number
+): Promise<string> {
+  if (!engine) throw new Error('NO_ENGINE');
+
+  const config = MODEL_TIERS[tier];
+
+  const response = await withTimeout(
+    engine.chat.completions.create({
+      messages,
+      temperature,
+      max_tokens: maxTokens ?? config.maxTokens,
+      stream: false
+    }),
+    config.timeoutMs
+  );
+
+  return extractContent(response);
+}
+
+export async function generateReply(ctx: ReplyContext): Promise<string> {
+  if (!engine || currentTier !== ctx.tier) {
+    return contextualFallback(ctx);
+  }
+
+  const messages = buildMessages(ctx);
 
   try {
-    const response = await engine.chat.completions.create({
-      messages: buildMessages(params),
-      temperature: 0.75,
-      max_tokens: 160,
-      stream: false
-    });
+    const raw = await requestChat(messages, ctx.tier, 0.82);
+    let text = sanitizeReply(raw, ctx.contact.name);
 
-    const raw = response?.choices?.[0]?.message?.content;
-    const cleaned = cleanReply(raw, params.contact.name);
+    if (!isValidReply(text, ctx.contact.name)) {
+      const repairMessages: ChatMessage[] = [
+        ...messages,
+        { role: 'assistant', content: raw || text || '...' },
+        {
+          role: 'user',
+          content:
+            'Esa respuesta no es válida. Reescríbela solo como mensaje WhatsApp del personaje. 1-3 frases, español natural, sin markdown, sin mencionar reglas, confianza, misiones o IA.'
+        }
+      ];
 
-    return cleaned || fallbackReply(params);
+      const repairedRaw = await requestChat(repairMessages, ctx.tier, 0.7, 120);
+      text = sanitizeReply(repairedRaw, ctx.contact.name);
+    }
+
+    return isValidReply(text, ctx.contact.name) ? text : contextualFallback(ctx);
   } catch {
-    return fallbackReply(params);
+    return contextualFallback(ctx);
+  }
+}
+
+export async function generateConfrontationReply(ctx: ConfrontationContext): Promise<string> {
+  if (!engine || currentTier === null) {
+    return fallbackConfrontation(ctx);
+  }
+
+  const messages = buildConfrontationMessages(ctx);
+
+  try {
+    const raw = await requestChat(messages, currentTier, 0.78, 140);
+    const text = sanitizeReply(raw, ctx.contact.name);
+
+    return isValidReply(text, ctx.contact.name) ? text : fallbackConfrontation(ctx);
+  } catch {
+    return fallbackConfrontation(ctx);
+  }
+}
+
+export async function generateSecretFollowUpReply(
+  ctx: SecretFollowUpContext
+): Promise<string> {
+  if (!engine || currentTier === null) {
+    return fallbackSecretFollowUp(ctx);
+  }
+
+  const messages = buildSecretMessages(ctx);
+
+  try {
+    const raw = await requestChat(messages, currentTier, 0.8, 100);
+    const text = sanitizeReply(raw, ctx.contact.name);
+
+    return isValidReply(text, ctx.contact.name) ? text : fallbackSecretFollowUp(ctx);
+  } catch {
+    return fallbackSecretFollowUp(ctx);
   }
 }
 
@@ -151,11 +256,13 @@ export async function summarizeConversation(params: {
   history: Message[];
   trust: number;
 }): Promise<string | null> {
-  if (!engine) return null;
+  if (!engine || currentTier === null) return null;
 
   const transcript = params.history
     .slice(-12)
-    .map((m) => `${m.role === 'user' ? 'Jugador' : params.contactName}: ${m.content}`)
+    .map(
+      (message) => `${message.role === 'user' ? 'Jugador' : params.contactName}: ${message.content}`
+    )
     .join('\n');
 
   const prompt = `
@@ -169,8 +276,8 @@ ${transcript}
 `.trim();
 
   try {
-    const response = await engine.chat.completions.create({
-      messages: [
+    const raw = await requestChat(
+      [
         {
           role: 'system',
           content:
@@ -178,12 +285,13 @@ ${transcript}
         },
         { role: 'user', content: prompt }
       ],
-      temperature: 0.2,
-      max_tokens: 110,
-      stream: false
-    });
+      currentTier,
+      0.2,
+      110
+    );
 
-    return cleanReply(response?.choices?.[0]?.message?.content);
+    const text = sanitizeReply(raw);
+    return text || null;
   } catch {
     return null;
   }

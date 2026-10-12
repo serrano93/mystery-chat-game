@@ -24,6 +24,7 @@ export function ContactList() {
   const theme = useGameStore((s) => s.theme);
   const aiStatus = useGameStore((s) => s.aiStatus);
   const aiStatusText = useGameStore((s) => s.aiStatusText);
+  const retryAI = useGameStore((s) => s.retryAI);
 
   return (
     <div className="flex h-full flex-col">
@@ -148,12 +149,16 @@ export function ContactList() {
 
       <footer className="border-t border-slate-200 bg-white/80 px-4 py-3 text-xs glass dark:border-white/10 dark:bg-slate-900/80">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
+          <button
+            onClick={retryAI}
+            className="min-w-0 rounded-xl px-1 py-1 text-left transition hover:bg-slate-100 dark:hover:bg-white/10"
+            title="Elegir modelo o reintentar la IA local"
+          >
             <p className="font-semibold text-slate-700 dark:text-slate-200">Motor narrativo</p>
             <p className="truncate text-slate-500 dark:text-slate-400">
               {aiStatusText || 'Preparando...'}
             </p>
-          </div>
+          </button>
           <span
             className={cn(
               'shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide',

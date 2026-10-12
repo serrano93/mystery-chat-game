@@ -1,4 +1,4 @@
-import { CLAIM_LIBRARY, TOPIC_LABELS, type CanonicalClaim } from '../data/claims';
+import { CLAIM_LIBRARY, type CanonicalClaim } from '../data/claims';
 import type { Claim, ClaimTopic, Contact, ContactState } from '../types';
 import { now, uid } from '../utils/id';
 import { includesAny, normalize } from './text';
@@ -13,7 +13,7 @@ const CONTRADICTION_WORDS = [
   'dijiste que',
   'antes dijiste',
   'cambiaste',
-  'te pillé',
+  'te pille',
   'te pillo',
   'estabas mintiendo',
   'me engañaste',
@@ -144,73 +144,4 @@ export function detectConfrontation(params: {
     success,
     evidenceUsed
   };
-}
-
-function pick<T>(items: T[]): T {
-  return items[Math.floor(Math.random() * items.length)];
-}
-
-const SUCCESS_PREFIXES: Record<Contact['temperament'], string[]> = {
-  formal: [
-    'Debo admitir que...',
-    'Mi deber era proteger la casa, pero...',
-    'Supongo que ya no tiene sentido callar...'
-  ],
-  nervous: ['¡No quise...!', 'Es que tenía miedo...', 'Perdóname, no sabía qué más hacer...'],
-  warm: ['Perdóname...', 'No quería preocuparte, pero...', 'Tienes razón. Debió salir antes...'],
-  hostile: ['Vale, sí.', 'Ya basta.', 'Me has acorralado.'],
-  calculated: [
-    'Interesante. Me has leído bien.',
-    'Está bien. Jugué mal esa carta.',
-    'No pensé que llegaras tan lejos.'
-  ]
-};
-
-const FAILURE_PREFIXES: Record<Contact['temperament'], string[]> = {
-  formal: [
-    'No miento.',
-    'Esa es mi versión de los hechos.',
-    'Le sugiero que no saque conclusiones.'
-  ],
-  nervous: ['¡No es mentira!', 'Me estás asustando...', 'No recuerdo haber dicho eso...'],
-  warm: [
-    'No te estoy engañando.',
-    'Intento protegernos a todos.',
-    'Por favor, no me presiones así.'
-  ],
-  hostile: ['No tengo por qué demostrarte nada.', 'Sigue soñando.', 'Esa no es mi problema.'],
-  calculated: [
-    'Las apariencias engañan.',
-    'Puedes creer lo que quieras.',
-    'No tienes prueba suficiente.'
-  ]
-};
-
-export function confrontationResponse(params: {
-  contact: Contact;
-  claim: Claim;
-  canonical: CanonicalClaim;
-  success: boolean;
-  trust: number;
-  evidenceUsed: boolean;
-}): string {
-  const { contact, claim, canonical, success, evidenceUsed } = params;
-
-  if (success) {
-    const prefix = pick(SUCCESS_PREFIXES[contact.temperament]);
-    const evidencePhrase = evidenceUsed ? ' Tienes razón: esa prueba no miente.' : '';
-    return `${prefix} ${canonical.truth}${evidencePhrase}`;
-  }
-
-  if (claim.truth === 'truth') {
-    const prefix = pick(FAILURE_PREFIXES[contact.temperament]);
-    return `${prefix} ${canonical.truth}`;
-  }
-
-  const prefix = pick(FAILURE_PREFIXES[contact.temperament]);
-  return `${prefix} ${canonical.lie}`;
-}
-
-export function humanizeTopic(topic: ClaimTopic): string {
-  return TOPIC_LABELS[topic] ?? topic.replace('_', ' ');
 }

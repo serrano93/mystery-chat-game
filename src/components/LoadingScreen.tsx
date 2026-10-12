@@ -1,13 +1,18 @@
 import { BrainCircuit, RefreshCw, ShieldAlert } from 'lucide-react';
+import { MODEL_TIERS } from '../data/settings';
 import { useGameStore } from '../store/useGameStore';
+import type { ModelTier } from '../types';
+import { cn } from '../utils/cn';
 
 export function LoadingScreen() {
   const aiProgress = useGameStore((s) => s.aiProgress);
   const aiStatusText = useGameStore((s) => s.aiStatusText);
+  const aiTier = useGameStore((s) => s.aiTier);
+  const aiStatus = useGameStore((s) => s.aiStatus);
   const initAI = useGameStore((s) => s.initAI);
+  const setAITier = useGameStore((s) => s.setAITier);
   const skipAI = useGameStore((s) => s.skipAI);
   const retryAI = useGameStore((s) => s.retryAI);
-  const aiStatus = useGameStore((s) => s.aiStatus);
 
   const percent = Math.round(Math.max(0, Math.min(1, aiProgress)) * 100);
 
@@ -25,6 +30,31 @@ export function LoadingScreen() {
           Preparando una experiencia narrativa con IA local. La primera carga puede tardar unos
           minutos.
         </p>
+
+        <div className="mt-6 grid grid-cols-3 gap-2">
+          {(Object.keys(MODEL_TIERS) as ModelTier[]).map((tier) => {
+            const config = MODEL_TIERS[tier];
+            const active = aiTier === tier;
+
+            return (
+              <button
+                key={tier}
+                onClick={() => setAITier(tier)}
+                className={cn(
+                  'rounded-2xl border px-3 py-3 text-left transition',
+                  active
+                    ? 'border-emerald-400/50 bg-emerald-500/15 text-white'
+                    : 'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10'
+                )}
+              >
+                <p className="text-xs font-bold uppercase tracking-wide">{config.label}</p>
+                <p className="mt-1 text-[11px] leading-tight text-slate-400">
+                  {config.description}
+                </p>
+              </button>
+            );
+          })}
+        </div>
 
         <div className="mt-8 w-full rounded-full bg-white/10 p-1">
           <div

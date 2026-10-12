@@ -35,7 +35,15 @@ export default function App() {
     state.syncMissions();
   }, [syncMissions]);
 
-  const showLoader = aiStatus === 'idle' || aiStatus === 'loading';
+  // Mientras no haya una decisión del jugador (IA lista o modo local elegido),
+  // la pantalla de preparación sigue visible. Antes 'unsupported' y 'error'
+  // caían directamente al juego y dejaban inalcanzables el selector de modelo
+  // y los botones de reintento.
+  const showLoader =
+    aiStatus === 'idle' ||
+    aiStatus === 'loading' ||
+    aiStatus === 'unsupported' ||
+    aiStatus === 'error';
 
   return (
     <ErrorBoundary>

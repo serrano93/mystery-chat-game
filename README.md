@@ -11,6 +11,8 @@ con [WebLLM](https://github.com/mlc-ai/web-llm) sobre WebGPU.
 - **Siempre jugable.** Si el dispositivo no soporta WebGPU, entra un motor narrativo local
   determinista (fallback) con el mismo sistema de confianza, secretos y pruebas.
 
+🔗 **Demo:** <https://mystery-chat-game-ashen.vercel.app>
+
 ---
 
 ## 🚀 Puesta en marcha
@@ -122,11 +124,18 @@ El build separa el bundle de WebLLM en un chunk lazy, así que la carga inicial 
 
 ## ☁️ Deploy en Vercel
 
-1. Importa el repo en Vercel.
-2. Framework preset: **Vite**.
-3. Build command `npm run build`, output directory `dist`.
+El proyecto ya está desplegado y **conectado al repositorio**: cada push a `main` publica en
+producción automáticamente.
 
-No hace falta ninguna variable de entorno ni función serverless.
+- Producción: <https://mystery-chat-game-ashen.vercel.app>
+- Panel: <https://vercel.com/javier-serr-projects/mystery-chat-game>
+- Ajustes del proyecto: preset **Vite**, build `npm run build`, output `dist`, install `npm install`.
+  Lo mismo queda declarado en [`vercel.json`](vercel.json), que además fija caché de un año para
+  `/assets/*` (tienen hash) y `must-revalidate` para `index.html`.
+
+Para recrearlo desde cero en otra cuenta: importa el repo en Vercel, preset **Vite**, build command
+`npm run build`, output directory `dist`. No hace falta ninguna variable de entorno ni función
+serverless.
 
 ---
 

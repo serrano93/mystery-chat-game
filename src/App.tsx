@@ -6,11 +6,13 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoadingScreen } from './components/LoadingScreen';
 import { MissionPanel } from './components/MissionPanel';
 import { ResultOverlay } from './components/ResultOverlay';
+import { WelcomeScreen } from './components/WelcomeScreen';
 import { useGameStore } from './store/useGameStore';
 import { cn } from './utils/cn';
 
 export default function App() {
   const theme = useGameStore((s) => s.theme);
+  const playerName = useGameStore((s) => s.playerName);
   const aiStatus = useGameStore((s) => s.aiStatus);
   const useFallback = useGameStore((s) => s.useFallback);
   const activeContactId = useGameStore((s) => s.activeContactId);
@@ -21,6 +23,8 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    if (!playerName) return;
+
     const state = useGameStore.getState();
 
     if (state.useFallback) {
@@ -33,17 +37,18 @@ export default function App() {
     }
 
     state.syncMissions();
-  }, [syncMissions]);
+  }, [playerName, syncMissions]);
 
   // Mientras no haya una decisión del jugador (IA lista o modo local elegido),
-  // la pantalla de preparación sigue visible. Antes 'unsupported' y 'error'
-  // caían directamente al juego y dejaban inalcanzables el selector de modelo
-  // y los botones de reintento.
+  // la pantalla de preparación sigue visible. Con solo 'idle'/'loading',
+  // 'unsupported' y 'error' caían directamente al juego y dejaban inalcanzables
+  // el selector de modelo y los botones de reintento.
   const showLoader =
-    aiStatus === 'idle' ||
-    aiStatus === 'loading' ||
-    aiStatus === 'unsupported' ||
-    aiStatus === 'error';
+    Boolean(playerName) &&
+    (aiStatus === 'idle' ||
+      aiStatus === 'loading' ||
+      aiStatus === 'unsupported' ||
+      aiStatus === 'error');
 
   return (
     <ErrorBoundary>
@@ -56,7 +61,9 @@ export default function App() {
         <div className="relative mx-auto flex h-dvh w-full max-w-md flex-col overflow-hidden border-x border-slate-200/70 bg-white/85 shadow-premium glass dark:border-white/10 dark:bg-slate-950/85">
           <div className="noise" />
 
-          {showLoader ? (
+          {!playerName ? (
+            <WelcomeScreen />
+          ) : showLoader ? (
             <LoadingScreen />
           ) : activeContactId ? (
             <ChatView />

@@ -11,12 +11,14 @@ import { INITIAL_MISSIONS } from '../src/data/missions';
 import { MODEL_TIERS, resolveTier } from '../src/data/settings';
 import { isValidReply, sanitizeReply } from '../src/lib/ai';
 import { detectConfrontation, maybeRecordClaim } from '../src/lib/claims';
+import { buildMessages } from '../src/lib/context';
 import { contextualFallback } from '../src/lib/fallback';
 import { evaluateEnding } from '../src/lib/endings';
 import { analyzeTurn } from '../src/lib/intents';
 import { createHeuristicMemory } from '../src/lib/memory';
 import { processMissions, type MissionProcessInput } from '../src/lib/missions';
 import { extractKeywords, getAvailableSecrets, pickSecretToReveal } from '../src/lib/secrets';
+import { cleanPlayerName, personalize, sanitizePlayerName } from '../src/utils/player';
 import type { Claim, Contact, ContactState, Intent, ReplyContext } from '../src/types';
 
 let passed = 0;
@@ -540,6 +542,7 @@ console.log('\n[8] Fallback contextual');
 function replyCtx(overrides: Partial<ReplyContext>): ReplyContext {
   return {
     contact: inspector,
+    playerName: 'Javier',
     trust: 40,
     history: [],
     userMessage: '',
@@ -635,7 +638,74 @@ check('cualquier contacto e intención produce algo jugable', () => {
 });
 
 // ---------------------------------------------------------------------------
-console.log('\n[9] Ajustes de modelo');
+console.log('\n[9] El nombre del jugador');
+// ---------------------------------------------------------------------------
+
+check('el nombre se limpia y se capitaliza', () => {
+  expect(cleanPlayerName('   javier   ') === 'javier', 'no colapsó espacios');
+  expect(sanitizePlayerName('javier') === 'Javier', 'no capitalizó');
+  expect(sanitizePlayerName('  javier   pérez ') === 'Javier pérez', 'no normalizó espacios');
+  return sanitizePlayerName('  javier   pérez ');
+});
+
+check('los símbolos se descartan y el nombre se acota a 24', () => {
+  expect(cleanPlayerName('###') === '', 'un nombre de símbolos debería quedar vacío');
+  expect(sanitizePlayerName('###') === 'Detective', 'sin nombre real debería caer a Detective');
+  const long = cleanPlayerName('a'.repeat(40));
+  expect(long.length === 24, `quedó en ${long.length} caracteres`);
+  return `${long.length} caracteres`;
+});
+
+check('las plantillas se sustituyen', () => {
+  const out = personalize('Hola {playerName}, ¿y {nombre}?', 'Javier');
+  expect(out === 'Hola Javier, ¿y Javier?', `quedó "${out}"`);
+  return out;
+});
+
+check('ninguna apertura deja una plantilla sin sustituir', () => {
+  const stragglers = CONTACTS.filter((c) => personalize(c.opening, 'Javier').includes('{'));
+  expect(stragglers.length === 0, `sin sustituir en: ${stragglers.map((c) => c.id).join(', ')}`);
+  return `${CONTACTS.length} aperturas`;
+});
+
+check('la apertura del inspector nombra al jugador', () => {
+  const opening = personalize(inspector.opening, 'Javier');
+  expect(opening.includes('Javier'), 'no aparece el nombre');
+  expect(!opening.includes('{'), 'quedó una plantilla sin sustituir');
+  return `${opening.slice(0, 52)}…`;
+});
+
+check('el prompt narrativo declara quién es el jugador', () => {
+  const messages = buildMessages(
+    replyCtx({
+      userMessage: '¿Por dónde empiezo?',
+      analysis: analyzeTurn('¿Por dónde empiezo?')
+    })
+  );
+  const system = messages.find((m) => m.role === 'system')?.content ?? '';
+  expect(system.includes('EL JUGADOR'), 'falta el bloque EL JUGADOR');
+  expect(system.includes('Nombre: Javier'), 'falta el nombre');
+  expect(!system.includes('{playerName}'), 'quedó una plantilla en el prompt');
+
+  const lastUser = messages[messages.length - 1]?.content ?? '';
+  expect(lastUser.includes('Javier'), 'el turno del jugador no lleva su nombre');
+  return `${messages.length} mensajes, system=${system.length} car.`;
+});
+
+check('el fallback se dirige al jugador por su nombre', () => {
+  const text = contextualFallback(
+    replyCtx({
+      trust: 80,
+      userMessage: 'Gracias, García.',
+      analysis: analyzeTurn('Gracias, García.')
+    })
+  );
+  expect(text.includes('Javier'), `no usó el nombre: "${text}"`);
+  return text;
+});
+
+// ---------------------------------------------------------------------------
+console.log('\n[10] Ajustes de modelo');
 // ---------------------------------------------------------------------------
 
 check('sin navegador se elige el tier equilibrado', () => {

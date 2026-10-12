@@ -31,10 +31,13 @@ import type {
   Secret
 } from '../types';
 import { now, uid } from '../utils/id';
+import { personalize, sanitizePlayerName } from '../utils/player';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 interface GameStore {
+  playerName: string | null;
+
   contacts: Record<string, ContactState>;
   messages: Record<string, Message[]>;
   unread: Record<string, number>;
@@ -64,6 +67,8 @@ interface GameStore {
   failedAttempts: number;
   endingId: string | null;
 
+  setPlayerName: (name: string) => void;
+
   initAI: (force?: boolean) => Promise<void>;
   setAITier: (tier: ModelTier) => void;
   skipAI: () => void;
@@ -83,7 +88,32 @@ interface GameStore {
   resetGame: () => void;
 }
 
-function createInitialState() {
+/** Datos que sobreviven al recargar la página. */
+type PersistedGame = Pick<
+  GameStore,
+  | 'playerName'
+  | 'contacts'
+  | 'messages'
+  | 'unread'
+  | 'revealedSecretIds'
+  | 'evidenceOwned'
+  | 'missions'
+  | 'claims'
+  | 'memories'
+  | 'activeContactId'
+  | 'theme'
+  | 'useFallback'
+  | 'aiTier'
+  | 'solved'
+  | 'gameOver'
+  | 'failedAttempts'
+  | 'accusation'
+  | 'endingId'
+>;
+
+function createInitialState(playerName: string | null = null) {
+  const displayName = playerName ?? 'Detective';
+
   const contacts: Record<string, ContactState> = {};
   const messages: Record<string, Message[]> = {};
   const unread: Record<string, number> = {};
@@ -100,7 +130,7 @@ function createInitialState() {
         {
           id: uid(),
           role: 'npc',
-          content: contact.opening,
+          content: personalize(contact.opening, displayName),
           timestamp: now() - 60_000,
           status: 'read'
         }
@@ -113,6 +143,7 @@ function createInitialState() {
   });
 
   return {
+    playerName,
     contacts,
     messages,
     unread,
@@ -151,6 +182,8 @@ function createInitialState() {
 export const useGameStore = create<GameStore>()(
   persist(
     (set, get) => {
+      const getName = () => get().playerName ?? 'Detective';
+
       const humanDelay = (text: string, min = 650, max = 2400) =>
         Math.min(max, min + text.length * 13 + Math.floor(Math.random() * 280));
 
@@ -183,7 +216,7 @@ export const useGameStore = create<GameStore>()(
                   {
                     id: uid(),
                     role: 'npc',
-                    content: definition.opening,
+                    content: personalize(definition.opening, getName()),
                     timestamp: now(),
                     status: 'read'
                   }
@@ -319,6 +352,7 @@ export const useGameStore = create<GameStore>()(
 
         const reply = await generateConfrontationReply({
           contact,
+          playerName: getName(),
           trust: newTrust,
           claim,
           canonical,
@@ -429,6 +463,7 @@ export const useGameStore = create<GameStore>()(
 
         const reply = await generateReply({
           contact,
+          playerName: getName(),
           trust: newTrust,
           history: historyBefore,
           userMessage: content,
@@ -502,6 +537,7 @@ export const useGameStore = create<GameStore>()(
 
           const followUp = await generateSecretFollowUpReply({
             contact,
+            playerName: getName(),
             secret,
             trust: newTrust,
             memory: get().memories[contactId]
@@ -537,7 +573,52 @@ export const useGameStore = create<GameStore>()(
       return {
         ...createInitialState(),
 
+        setPlayerName: (raw) => {
+          const name = sanitizePlayerName(raw);
+
+          set((state) => {
+            const messages: Record<string, Message[]> = {};
+
+            for (const [id, msgs] of Object.entries(state.messages)) {
+              messages[id] = msgs.map((m) => ({
+                ...m,
+                content: personalize(m.content, name)
+              }));
+            }
+
+            const inspectorOpening = personalize(contactMap.inspector.opening, name);
+            const inspectorMessages = messages.inspector ?? [];
+
+            if (inspectorMessages.length === 0) {
+              messages.inspector = [
+                {
+                  id: uid(),
+                  role: 'npc',
+                  content: inspectorOpening,
+                  timestamp: now(),
+                  status: 'read'
+                }
+              ];
+            } else {
+              const firstNpcIndex = inspectorMessages.findIndex((m) => m.role === 'npc');
+
+              if (firstNpcIndex !== -1) {
+                messages.inspector = inspectorMessages.map((m, index) =>
+                  index === firstNpcIndex ? { ...m, content: inspectorOpening } : m
+                );
+              }
+            }
+
+            return {
+              playerName: name,
+              messages
+            };
+          });
+        },
+
         initAI: async (force = false) => {
+          if (!force && get().aiStatus === 'ready') return;
+
           if (force) {
             set({ useFallback: false });
           }
@@ -725,7 +806,10 @@ export const useGameStore = create<GameStore>()(
                 },
                 unread: {
                   ...prev.unread,
-                  inspector: (prev.unread.inspector ?? 0) + 1
+                  inspector:
+                    prev.activeContactId === 'inspector'
+                      ? prev.unread.inspector ?? 0
+                      : (prev.unread.inspector ?? 0) + 1
                 }
               }));
             }
@@ -755,14 +839,17 @@ export const useGameStore = create<GameStore>()(
         },
 
         resetGame: () => {
+          const name = get().playerName;
+
           set((state) => ({
-            ...createInitialState(),
+            ...createInitialState(name),
             theme: state.theme,
             useFallback: state.useFallback,
             aiStatus: state.aiStatus,
             aiProgress: state.aiProgress,
             aiStatusText: state.aiStatusText,
-            aiTier: state.aiTier
+            aiTier: state.aiTier,
+            playerName: name
           }));
 
           get().syncMissions();
@@ -770,9 +857,23 @@ export const useGameStore = create<GameStore>()(
       };
     },
     {
+      // Se conserva la clave anterior y se sube la versión: el cambio de
+      // esquema es puramente aditivo (playerName), así que una migración evita
+      // tirar la partida en curso. Si prefieres empezar de cero, cambia `name`
+      // a 'mystery-whatsapp-v4'.
       name: 'mystery-whatsapp-v3',
-      version: 3,
-      partialize: (state) => ({
+      version: 4,
+      migrate: (persistedState, version) => {
+        const state = (persistedState ?? {}) as Partial<PersistedGame>;
+
+        if (version < 4) {
+          return { ...state, playerName: state.playerName ?? null } as PersistedGame;
+        }
+
+        return state as PersistedGame;
+      },
+      partialize: (state): PersistedGame => ({
+        playerName: state.playerName,
         contacts: state.contacts,
         messages: state.messages,
         unread: state.unread,

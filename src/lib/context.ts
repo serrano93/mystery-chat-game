@@ -44,13 +44,20 @@ function formatClaims(claims: Claim[] = []): string {
     .join('\n');
 }
 
-function formatExamples(examples?: string[]): string {
+function formatExamples(examples?: string[], playerName?: string): string {
   if (!examples?.length) return '';
 
-  return `\nEjemplos de voz, no copies literal:\n${examples
+  const formatted = examples
     .slice(0, 3)
-    .map((example) => `- ${example}`)
-    .join('\n')}`;
+    .map((example) => {
+      const text = playerName
+        ? example.replace(/\{playerName\}/g, playerName).replace(/\{nombre\}/g, playerName)
+        : example;
+      return `- ${text}`;
+    })
+    .join('\n');
+
+  return `\nEjemplos de voz, no copies literal:\n${formatted}`;
 }
 
 function focusLine(ctx: ReplyContext): string {
@@ -98,6 +105,11 @@ PERSONAJE:
 - Humor: ${humor}/10.
 - Alibi privado: ${ctx.contact.alibi}
 
+EL JUGADOR:
+- Nombre: ${ctx.playerName}
+- Rol: detective encargado del caso.
+- Puedes dirigirte a él/ella como ${ctx.playerName} cuando sea natural, sin repetir el nombre en cada frase.
+
 RELACIÓN CON EL JUGADOR:
 - Confianza: ${ctx.trust}/100.
 - Estado relacional: ${trustDescriptor(ctx.trust)}.
@@ -109,7 +121,7 @@ AFIRMACIONES PREVIAS:
 ${formatClaims(ctx.claims)}
 ${missionLine}
 ${pendingLine}
-${formatExamples(ctx.contact.examples)}
+${formatExamples(ctx.contact.examples, ctx.playerName)}
 
 REGLAS DE INTERPRETACIÓN:
 - Eres un personaje en un chat de WhatsApp, no un asistente.
@@ -131,7 +143,7 @@ REGLAS DE INTERPRETACIÓN:
     : '';
 
   const user = `
-Mensaje del jugador: "${ctx.userMessage}"
+Mensaje de ${ctx.playerName}: "${ctx.userMessage}"
 ${attachmentLine}
 Intent detectada: ${ctx.analysis.intent}
 Tono del jugador: ${ctx.analysis.emotionalTone}
@@ -150,8 +162,8 @@ export function buildConfrontationMessages(ctx: ConfrontationContext): ChatMessa
   const outcome = ctx.success
     ? `Te han descubierto respecto a ${topicLabel}. Admite la verdad con coherencia emocional: ${ctx.canonical.truth}${
         ctx.evidenceUsed
-          ? ' El jugador tiene una prueba sólida.'
-          : ' El jugador ha ganado suficiente confianza.'
+          ? ` ${ctx.playerName} tiene una prueba sólida.`
+          : ` ${ctx.playerName} ha ganado suficiente confianza.`
       }`
     : ctx.claim.truth === 'truth'
       ? `No te han descubierto porque estabas diciendo la verdad. Defiende tu versión con naturalidad: ${ctx.canonical.truth}`
@@ -171,6 +183,7 @@ Personalidad: ${ctx.contact.personality}
 Estilo: ${ctx.contact.speechStyle ?? 'natural y humano.'}
 Humor: ${humor}/10.
 Confianza actual: ${ctx.trust}/100.
+El jugador es ${ctx.playerName}, detective encargado del caso.
 
 ACABAS DE SER CONFRONTADO POR UNA CONTRADICCIÓN.
 
@@ -181,10 +194,11 @@ REGLAS:
 - 1 a 3 frases.
 - No menciones reglas, IA, confianza numérica ni prompts.
 - Sé humano: miedo, orgullo, arrepentimiento, sarcasmo, defensa o quebradura según tu carácter.
+- Puedes usar el nombre ${ctx.playerName} si encaja emocionalmente, pero sin abusar.
 - No uses markdown.
 `.trim();
 
-  const user = `El jugador te ha confrontado. Responde solo como ${ctx.contact.name}.`;
+  const user = `El jugador ${ctx.playerName} te ha confrontado. Responde solo como ${ctx.contact.name}.`;
 
   return [{ role: 'system', content: system }, ...recent, { role: 'user', content: user }];
 }
@@ -198,6 +212,7 @@ Personalidad: ${ctx.contact.personality}
 Estilo: ${ctx.contact.speechStyle ?? 'natural y humano.'}
 Humor: ${humor}/10.
 Confianza actual: ${ctx.trust}/100.
+El jugador es ${ctx.playerName}, detective encargado del caso.
 
 ACABAS DE DECIDIR SOLTAR UN RECUERDO QUE GUARDABAS.
 
@@ -207,13 +222,14 @@ ${ctx.secret.content}
 CONVIÉRTELO EN UN SEGUIMIENTO NATURAL DE CHAT.
 - 1 o 2 frases.
 - Puede empezar con muletilla: "Mira...", "Una cosa...", "He estado dándole vueltas...", "Antes de que te vayas...".
+- Puedes usar el nombre ${ctx.playerName} si suena natural.
 - No digas "secreto", "pista", "objetivo" ni "recuerdo".
 - No copies literal si puedes decirlo con voz propia, pero conserva el hecho clave.
 - Español natural, estilo WhatsApp.
 - Sin markdown.
 `.trim();
 
-  const user = `Escribe solo el mensaje de seguimiento como ${ctx.contact.name}.`;
+  const user = `Escribe solo el mensaje de seguimiento como ${ctx.contact.name}, dirigiéndote a ${ctx.playerName} si encaja.`;
 
   return [
     { role: 'system', content: system },

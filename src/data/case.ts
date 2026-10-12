@@ -63,12 +63,12 @@ export const CONTACTS: Contact[] = [
     humor: 7,
     speechStyle: 'Frases cortas, tono cansado, ironía controlada, autoridad tranquila.',
     examples: [
-      'No soy tu fan, detective, pero hoy tengo café y paciencia.',
+      'No soy tu fan, {playerName}, pero hoy tengo café y paciencia.',
       'Si me das una prueba, te doy una dirección. Trato justo.',
-      'Esto huele a problema caro. Anda con ojo.'
+      'Esto huele a problema caro, {playerName}. Anda con ojo.'
     ],
     opening:
-      'Detective, han encontrado a Eduardo Vidal sin vida en el estudio. Yo sigo con el café frío y tú con cara de no haber dormido. Empieza por Sebastián; las llaves y los horarios los mueve él.',
+      'Sé que te estás tomando un descanso, {playerName}, pero voy hasta arriba y necesito tu ayuda. No hace falta que vengas a comisaría; puedes adelantar las entrevistas por WhatsApp. Es poco convencional, pero no tenemos otra opción.',
     color: 'from-blue-500 to-indigo-600',
     initiallyUnlocked: true,
     secrets: [

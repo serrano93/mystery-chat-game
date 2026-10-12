@@ -33,7 +33,7 @@ Otros scripts:
 npm run build       # tsc -b && vite build  ->  /dist
 npm run preview     # sirve /dist en local
 npm run typecheck   # solo comprobación de tipos
-npm run test:logic  # 43 comprobaciones de la lógica de juego (sin navegador)
+npm run test:logic  # 50 comprobaciones de la lógica de juego (sin navegador)
 ```
 
 ---
@@ -77,8 +77,8 @@ src/
 │   ├── logic.ts            # confianza y análisis de mensajes
 │   └── text.ts             # normalización de texto
 ├── store/useGameStore.ts   # estado global, persistencia y orquestación
-├── utils/                  # cn, ids, formateo de fechas
-└── components/             # UI estilo WhatsApp
+├── utils/                  # cn, ids, fechas y nombre del jugador (player.ts)
+└── components/             # UI estilo WhatsApp (incluye WelcomeScreen)
 scripts/
 ├── simulate.ts             # simulación de la lógica (npm run test:logic)
 └── generate_pwa_icons.py   # regenera los iconos PNG desde el diseño del SVG
@@ -124,11 +124,27 @@ es una decisión consciente de diseño para mantener el proyecto 100 % estático
 
 ---
 
-## 🎭 Voz de los personajes
+## 🎭 Voz de los personajes y el nombre del jugador
+
+Antes de abrir el expediente, una pantalla de inicio pide el **nombre del detective**. Se limpia
+(solo letras, números, espacios, apóstrofos y guiones; máximo 24 caracteres), se guarda en el
+guardado local y **nunca sale del dispositivo**.
+
+Ese nombre se usa en todas partes:
+
+- **Apertura del inspector**, que además justifica por qué se investiga por WhatsApp: *"Sé que te
+  estás tomando un descanso, {nombre}, pero voy hasta arriba y necesito tu ayuda. No hace falta que
+  vengas a comisaría; puedes adelantar las entrevistas por WhatsApp."*
+- **Aperturas de los contactos** que se van desbloqueando, personalizadas al momento.
+- **Prompt narrativo**: el modelo recibe un bloque `EL JUGADOR` con el nombre y el rol, y la
+  instrucción de usarlo *cuando sea natural, sin repetirlo en cada frase*.
+- **Motor local, confrontaciones y seguimientos de secretos**, que también se dirigen al jugador por
+  su nombre.
 
 Cada contacto declara `humor` (0-10), `speechStyle` y `examples`. El inspector García arranca con
 humor 7 y, si hay confianza, suelta ironía seca; el mayordomo tiene humor 2 y jamás bromea. Los
-ejemplos se inyectan en el prompt **como muestra de voz, nunca para copiarlos**.
+ejemplos se inyectan en el prompt **como muestra de voz, nunca para copiarlos** (las plantillas
+`{playerName}` se sustituyen antes de enviarlos).
 
 El brief narrativo que recibe el modelo incluye: resumen del caso, personalidad, estilo, humor,
 coartada privada, confianza y estado relacional, memoria privada, afirmaciones previas, la misión
@@ -204,12 +220,20 @@ serverless.
 
 ## 🔒 Persistencia
 
-El progreso se guarda en `localStorage` bajo la clave `mystery-whatsapp-v3`. Para reiniciar a mano:
+El progreso (incluido el nombre) se guarda en `localStorage` bajo la clave `mystery-whatsapp-v3`,
+con `version: 4`. El cambio de esquema de la v2.1.1 es aditivo, así que hay una **migración** que
+añade `playerName` en lugar de tirar la partida. Para reiniciar a mano:
 
 ```js
 localStorage.removeItem('mystery-whatsapp-v3');
 location.reload();
 ```
+
+Para forzar un corte limpio de esquema en el futuro, cambia `name` por una clave nueva
+(`mystery-whatsapp-v4`) en [`src/store/useGameStore.ts`](src/store/useGameStore.ts): eso descarta
+las partidas anteriores sin migración.
+
+El tier de modelo se guarda aparte, en `mystery-model-tier`.
 
 ---
 
@@ -222,6 +246,7 @@ location.reload();
 - [x] PWA instalable (manifest + service worker).
 - [x] Tiers de modelo y prompt narrativo con intención y tono.
 - [x] Secretos revelados como seguimiento natural en vez de frase pegada.
+- [x] Nombre del detective en pantalla de inicio, guardado y prompt.
 - [ ] Streaming de respuestas token a token.
 - [ ] Avatares ilustrados y pruebas como imágenes.
 - [ ] Memoria episódica por NPC ("me prometió discreción", "le mentí y aún me mira raro").

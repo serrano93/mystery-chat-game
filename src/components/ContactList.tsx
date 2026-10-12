@@ -25,6 +25,7 @@ export function ContactList() {
   const aiStatus = useGameStore((s) => s.aiStatus);
   const aiStatusText = useGameStore((s) => s.aiStatusText);
   const retryAI = useGameStore((s) => s.retryAI);
+  const playerName = useGameStore((s) => s.playerName);
 
   return (
     <div className="flex h-full flex-col">
@@ -35,7 +36,10 @@ export function ContactList() {
               Caso Vidal
             </p>
             <h1 className="mt-1 text-2xl font-bold leading-tight">Misterio en WhatsApp</h1>
-            <p className="mt-1 text-sm text-slate-300">Resuelve el crimen desde el sofá.</p>
+            <p className="mt-1 text-sm text-slate-300">
+              Resuelve el crimen desde el sofá
+              {playerName ? ` · Detective ${playerName}` : ''}.
+            </p>
           </div>
 
           <div className="flex items-center gap-1">

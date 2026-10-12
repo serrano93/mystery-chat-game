@@ -15,14 +15,6 @@ function proper(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-const INSPECTOR_WARM = [
-  'Vale, detective. Te ayudo porque me caes bien, no porque el caso esté fácil.',
-  'Si fuera por mí, te daría café y una confesión, pero aquí todo huele a problema.',
-  'No soy tu sidekick, pero hoy tengo paciencia. Pregunta.',
-  'Me caes bien. No lo estropees con prisas.',
-  'Tienes cara de no dormir. Aun así, te escucho.'
-];
-
 const INSPECTOR_NEUTRAL = [
   'Estamos en lo mismo, detective. No me hagas perder el tiempo.',
   'El caso está sucio. Anda con cuidado.',
@@ -68,13 +60,14 @@ const EVIDENCE_RESPONSES = [
 function temperamentDefault(ctx: ReplyContext): string {
   const trust = ctx.trust;
   const temperament = ctx.contact.temperament;
+  const name = ctx.playerName;
 
   if (temperament === 'formal') {
     return trust < 35
       ? 'Mis deberes me ocupaban. No tengo más que añadir.'
       : trust < 70
-        ? 'Haré lo posible por ayudar, con calma.'
-        : 'Le trataré con franqueza. Pregunte.';
+        ? `Haré lo posible por ayudar, ${name}, con calma.`
+        : `Le trataré con franqueza, ${name}. Pregunte.`;
   }
 
   if (temperament === 'nervous') {
@@ -82,7 +75,7 @@ function temperamentDefault(ctx: ReplyContext): string {
       ? 'No me presione, por favor. Estoy asustado.'
       : trust < 70
         ? 'Creo que vi algo, pero no estoy seguro.'
-        : 'Le contaré lo que sé. Usted me da tranquilidad.';
+        : `Le contaré lo que sé, ${name}. Usted me da tranquilidad.`;
   }
 
   if (temperament === 'warm') {
@@ -90,7 +83,7 @@ function temperamentDefault(ctx: ReplyContext): string {
       ? 'Entiendo su preocupación. No fue una noche fácil.'
       : trust < 70
         ? 'Le cuento lo que recuerdo. Había tensión en la casa.'
-        : 'Confío en usted. Le diré lo que vi.';
+        : `Confío en usted, ${name}. Le diré lo que vi.`;
   }
 
   if (temperament === 'hostile') {
@@ -98,14 +91,14 @@ function temperamentDefault(ctx: ReplyContext): string {
       ? 'No tengo por qué darle explicaciones.'
       : trust < 70
         ? 'Hable rápido. No me gusta este interrogatorio.'
-        : 'Está bien, pregunte. Pero no me mienta.';
+        : `Está bien, ${name}, pregunte. Pero no me mienta.`;
   }
 
   return trust < 35
     ? 'Las apariencias engañan. Cuidado con lo que da por hecho.'
     : trust < 70
       ? 'Todo encaja, pero no del todo. Sigo escuchando.'
-      : 'Usted es más listo de lo que pensaba. Vamos por buen camino.';
+      : `Usted es más listo de lo que pensaba, ${name}. Vamos por buen camino.`;
 }
 
 export function contextualFallback(ctx: ReplyContext): string {
@@ -113,33 +106,49 @@ export function contextualFallback(ctx: ReplyContext): string {
   const intent = ctx.analysis.intent;
   const tone = ctx.analysis.emotionalTone;
   const humor = ctx.contact.humor ?? 3;
+  const name = ctx.playerName;
 
   if (ctx.contact.id === 'inspector') {
     if (ctx.trust >= 30 || tone === 'playful') {
       if (intent === 'ask_alibi' || intent === 'ask_location') {
         return pick([
-          'Yo estaba en comisaría, informando. Aburrido, pero coherente.',
-          'Café, papeles y malas caras. Mi coartada es el aburrimiento.'
+          `Yo estaba en comisaría, ${name}. Informando. Aburrido, pero coherente.`,
+          `Café, papeles y malas caras. Mi coartada es el aburrimiento, ${name}.`,
+          'Estaba en comisaría, revisando el informe. Nada glamuroso.'
         ]);
       }
 
       if (intent === 'comfort' || intent === 'request_help') {
-        return pick(INSPECTOR_WARM);
+        return pick([
+          `Vale, ${name}. Te ayudo porque me caes bien, no porque el caso esté fácil.`,
+          `No soy tu sidekick, ${name}, pero hoy tengo paciencia. Pregunta.`,
+          `Me caes bien. No lo estropees con prisas, ${name}.`,
+          'Si fuera por mí, te daría café y una confesión, pero aquí todo huele a problema.'
+        ]);
       }
 
       if (intent === 'joke') {
         return pick([
-          'No se acostumbre, detective.',
-          'Sigo sin reírme. Pero me caes mejor.',
-          'Humor en una casa muerta. Me gusta.'
+          `No se acostumbre, ${name}.`,
+          `Sigo sin reírme. Pero me caes mejor, ${name}.`,
+          `Humor en una casa muerta. Me gusta, ${name}.`,
+          'Tienes humor para ser alguien con sangre en el expediente.'
         ]);
       }
 
-      return pick(INSPECTOR_WARM);
+      return pick([
+        `Vale, ${name}. Te escucho.`,
+        `No me hagas perder el tiempo, ${name}.`,
+        `Di lo que tengas, ${name}. Yo decido si sirve.`
+      ]);
     }
 
     if (intent === 'comfort' || intent === 'request_help') {
-      return pick(['No necesito consuelo. Necesito resultados.', 'Gracias. Ahora ve al grano.']);
+      return pick([
+        'No necesito consuelo. Necesito resultados.',
+        'Gracias. Ahora ve al grano.',
+        `No te confíes, ${name}. Aún no hemos terminado.`
+      ]);
     }
 
     return pick(INSPECTOR_NEUTRAL);
@@ -154,7 +163,7 @@ export function contextualFallback(ctx: ReplyContext): string {
     return pick([
       '¿Por qué sospechas de mí?',
       'No fue como lo pintas.',
-      'Si tanto dudas, mira también a los demás.'
+      `Si tanto dudas, mira también a los demás, ${name}.`
     ]);
   }
 
@@ -207,11 +216,11 @@ export function contextualFallback(ctx: ReplyContext): string {
     const person = ctx.analysis.mentioned.people.find((item) => !own.includes(item));
 
     if (person) {
-      const name = proper(person);
+      const target = proper(person);
       return pick([
-        `No hablé con ${name}.`,
-        `A ${name} lo vi de lejos, nada más.`,
-        `No me junto con ${name} por las noches.`
+        `No hablé con ${target}.`,
+        `A ${target} lo vi de lejos, nada más.`,
+        `No me junté con ${target} anoche.`
       ]);
     }
   }
@@ -230,7 +239,7 @@ export function contextualFallback(ctx: ReplyContext): string {
 
   if (intent === 'request_help') {
     return ctx.trust >= 50
-      ? 'Está bien. Le escucho con calma.'
+      ? `Está bien, ${name}. Le escucho con calma.`
       : 'No puedo ayudar mucho sin saber qué busca exactamente.';
   }
 
@@ -238,15 +247,17 @@ export function contextualFallback(ctx: ReplyContext): string {
 }
 
 export function fallbackConfrontation(ctx: ConfrontationContext): string {
+  const name = ctx.playerName;
+
   if (ctx.success) {
     const prefix =
       ctx.contact.temperament === 'hostile'
-        ? 'Vale, sí.'
+        ? `Vale, sí, ${name}.`
         : ctx.contact.temperament === 'nervous'
           ? 'Perdóname, es que...'
           : ctx.contact.temperament === 'warm'
             ? 'No quería preocuparte, pero...'
-            : 'Debo admitir que...';
+            : `Debo admitir que, ${name}...`;
 
     return `${prefix} ${shorten(ctx.canonical.truth, 220)}`;
   }
@@ -257,7 +268,7 @@ export function fallbackConfrontation(ctx: ConfrontationContext): string {
 
   const prefix =
     ctx.contact.temperament === 'hostile'
-      ? 'Sigue soñando.'
+      ? `Sigue soñando, ${name}.`
       : ctx.contact.temperament === 'nervous'
         ? '¡No es mentira!'
         : 'Esa es mi versión.';
@@ -266,6 +277,8 @@ export function fallbackConfrontation(ctx: ConfrontationContext): string {
 }
 
 export function fallbackSecretFollowUp(ctx: SecretFollowUpContext): string {
+  const name = ctx.playerName;
+
   const prefixes = [
     'Mira, una cosa...',
     'He estado dándole vueltas...',
@@ -275,8 +288,8 @@ export function fallbackSecretFollowUp(ctx: SecretFollowUpContext): string {
   ];
 
   if (ctx.contact.id === 'inspector') {
-    prefixes.push('Vale, no se lo digas a nadie...');
-    prefixes.push('Te lo digo porque me caes bien...');
+    prefixes.push(`Vale, ${name}, no se lo digas a nadie...`);
+    prefixes.push(`Te lo digo porque me caes bien, ${name}...`);
   }
 
   return `${pick(prefixes)} ${shorten(ctx.secret.content, 220)}`;

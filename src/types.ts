@@ -125,6 +125,7 @@ export interface TurnAnalysis {
 
 export interface ReplyContext {
   contact: Contact;
+  playerName: string;
   trust: number;
   history: Message[];
   userMessage: string;
@@ -140,6 +141,7 @@ export interface ReplyContext {
 
 export interface ConfrontationContext {
   contact: Contact;
+  playerName: string;
   trust: number;
   claim: Claim;
   canonical: {
@@ -156,6 +158,7 @@ export interface ConfrontationContext {
 
 export interface SecretFollowUpContext {
   contact: Contact;
+  playerName: string;
   secret: Secret;
   trust: number;
   memory?: MemoryNote;

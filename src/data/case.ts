@@ -68,7 +68,7 @@ export const CONTACTS: Contact[] = [
       'Esto huele a problema caro, {playerName}. Anda con ojo.'
     ],
     opening:
-      'Sé que te estás tomando un descanso, {playerName}, pero voy hasta arriba y necesito tu ayuda. No hace falta que vengas a comisaría; puedes adelantar las entrevistas por WhatsApp. Es poco convencional, pero no tenemos otra opción.',
+      'Sé que te estás tomando un descanso, {playerName}, pero voy hasta arriba y necesito tu ayuda. No hace falta que vengas a comisaría; puedes adelantar las entrevistas por WhatsApp. Es poco convencional, pero no tenemos otra opción.\n\nTe pongo en situación: Eduardo Vidal, dueño de la mansión, amaneció muerto en su estudio. La puerta estaba cerrada por dentro, sin signos de robo ni de forcejeo en la entrada. Toda la casa sabe algo, pero calla. Con lo que tengo hasta ahora, la muerte no fue un accidente ni un suicidio: alguien estuvo allí antes que nosotros.\n\nY ya he tomado una decisión: acabo de decirle a Sebastián, el mayordomo, que te escriba. Él controla las llaves y los horarios de la casa, y anoche oyó algo desde el pasillo. En cuanto coja el teléfono, te contará lo que escuchó. Mientras tanto, si quieres abrir boca conmigo, pregúntame por dónde empezar.',
     color: 'from-blue-500 to-indigo-600',
     initiallyUnlocked: true,
     secrets: [

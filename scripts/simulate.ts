@@ -675,6 +675,10 @@ check('la apertura del inspector nombra al jugador', () => {
   const opening = personalize(inspector.opening, 'Javier');
   expect(opening.includes('Javier'), 'no aparece el nombre');
   expect(!opening.includes('{'), 'quedó una plantilla sin sustituir');
+  expect(
+    opening.includes('Sebastián') && /direc|escriba|te aviso|dicho/.test(opening),
+    'la intro no menciona a Sebastián'
+  );
   return `${opening.slice(0, 52)}…`;
 });
 

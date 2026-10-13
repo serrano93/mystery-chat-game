@@ -1,8 +1,9 @@
 import { EVIDENCE } from '../data/case';
 import { TOPIC_LABELS } from '../data/claims';
-import type { Claim, Contact, Mission } from '../types';
+import type { Claim, Contact, Mission, Secret } from '../types';
 import { getCanonicalClaim } from './claims';
-import { getAvailableSecrets } from './secrets';
+import { analyzeMessage } from './logic';
+import { extractKeywords, getAvailableSecrets } from './secrets';
 import { normalize } from './text';
 
 export interface SaySuggestion {
@@ -63,6 +64,39 @@ function trimStatement(text: string): string {
   return text.replace(/[\s.…]+$/, '').trim();
 }
 
+/**
+ * Pregunta genérica a partir de la primera palabra distintiva del secreto. Si
+ * no hay ninguna (nombres propios, verbos conjugados…), se recurre al
+ * recordatorio del tema para no dejar la sugerencia vacía.
+ */
+function genericProbe(keyword: string | undefined, secretId: string): string {
+  const word = keyword?.replace(/[^a-z0-9]/g, '');
+  if (!word || word.length < 4) {
+    return `Cuéntame qué sabes sobre el asunto «${secretId}».`;
+  }
+  return `Cuéntame qué sabes sobre ${word}.`;
+}
+
+/**
+ * Elige el recuerdo a provocar y su frase. Primero los que tienen pista
+ * escrita en los datos (`revealHint`); si no queda ninguno, se construye una
+ * pregunta genérica con las palabras clave del secreto, así el jugador nunca
+ * se queda sin sugerencia aunque el caso no traiga hints redactados.
+ */
+function pickProbe(probes: Secret[], seed: number): { id: string; text: string } | null {
+  if (!probes.length) return null;
+
+  const hinted = probes.filter((secret) => Boolean(secret.revealHint));
+  if (hinted.length) {
+    const chosen = hinted[seed % hinted.length];
+    return { id: chosen.id, text: chosen.revealHint as string };
+  }
+
+  const chosen = probes[seed % probes.length];
+  const firstKeyword = extractKeywords(chosen)[0];
+  return { id: chosen.id, text: genericProbe(firstKeyword, chosen.id) };
+}
+
 export function buildSuggestions(params: {
   contact: Contact;
   trust: number;
@@ -96,18 +130,18 @@ export function buildSuggestions(params: {
 
   // 1. Pregunta que hace saltar el siguiente recuerdo ya desbloqueado por
   //    confianza. La frase contiene palabras clave del secreto, así que
-  //    garantiza la revelación.
-  const probes = getAvailableSecrets(contact, trust, revealedSecretIds).filter(
-    (secret) => secret.revealHint
-  );
+  //    garantiza la revelación. Si un secreto no trae `revealHint` redactada,
+  //    se construye una pregunta genérica con sus palabras clave.
+  const probes = getAvailableSecrets(contact, trust, revealedSecretIds);
+  const probe = pickProbe(probes, seed);
 
   add(
-    probes.length
+    probe
       ? {
           kind: 'say',
-          id: `probe:${probes[seed % probes.length].id}`,
-          label: probes[seed % probes.length].revealHint as string,
-          text: probes[seed % probes.length].revealHint as string,
+          id: `probe:${probe.id}`,
+          label: probe.text,
+          text: probe.text,
           hint: `${contact.name} ya confía lo bastante para soltarlo si tocas el tema.${missionLine}`
         }
       : null
@@ -132,7 +166,7 @@ export function buildSuggestions(params: {
 
   // 3. Mentira que se puede tumbar ahora mismo (con prueba o con confianza).
   const exposed = claims.find((claim) => {
-    if (claim.exposed) return false;
+    if (claim.exposed || claim.truth === 'truth') return false;
 
     const canonical = getCanonicalClaim(contact.id, claim.topic);
     if (!canonical) return false;
@@ -158,7 +192,9 @@ export function buildSuggestions(params: {
     });
   }
 
-  // 4. Subir confianza cuando aún hay un recuerdo por debajo del umbral.
+  // 4. Subir confianza cuando aún hay un recuerdo por debajo del umbral. Se
+  //    prueban las frases del temperamento y se elige la primera que realmente
+  //    suma en este personaje, para no ofrecer nunca un botón contraproducente.
   const locked = contact.secrets.filter(
     (secret) => !revealedSecretIds.includes(secret.id) && trust < secret.minTrust
   );
@@ -166,7 +202,11 @@ export function buildSuggestions(params: {
   if (locked.length) {
     const next = locked.reduce((a, b) => (a.minTrust <= b.minTrust ? a : b));
     const builders = TRUST_BUILDERS[contact.temperament];
-    const text = builders[seed % builders.length];
+    const offset = seed % builders.length;
+    const rotation = [...builders.slice(offset), ...builders.slice(0, offset)];
+    const text =
+      rotation.find((candidate) => analyzeMessage(candidate, contact).trustDelta > 0) ??
+      builders[offset];
     add({
       kind: 'say',
       id: `trust:${next.id}`,

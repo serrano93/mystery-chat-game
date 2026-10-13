@@ -719,14 +719,41 @@ check('el fallback puede dirigirse al jugador por su nombre', () => {
 console.log('\n[11] Sugerencias del compositor');
 // ---------------------------------------------------------------------------
 
+/**
+ * Frase que `buildSuggestions` ofrecería para provocar un secreto concreto,
+ * calculada con el mismo seed para que el test pruebe exactamente lo que vería
+ * el jugador (incluida la pregunta genérica cuando el dato no trae hint).
+ */
+function probeTextFor(person: Contact, secretId: string): string | null {
+  const suggestions = buildSuggestions({
+    contact: person,
+    trust: person.secrets.find((s) => s.id === secretId)?.minTrust ?? 100,
+    revealedSecretIds: ALL_SECRETS.filter((id) => id !== secretId),
+    claims: [],
+    evidenceOwned: [],
+    sentEvidenceIds: [],
+    seed: 0,
+    limit: 1
+  });
+
+  const probe = suggestions.find((s) => s.id === `probe:${secretId}`);
+  return probe && probe.kind === 'say' ? probe.text : null;
+}
+
 check('cada pista sugerida contiene una palabra clave de su secreto', () => {
   const bad: string[] = [];
 
   for (const person of CONTACTS) {
     for (const secret of person.secrets) {
-      const norm = normalize(secret.revealHint ?? '');
+      const text = probeTextFor(person, secret.id);
+      if (text === null) {
+        bad.push(`${secret.id}: sin sugerencia de pista`);
+        continue;
+      }
+
+      const norm = normalize(text);
       const hit = extractKeywords(secret).some((keyword) => norm.includes(keyword));
-      if (!hit) bad.push(`${secret.id} -> "${secret.revealHint}"`);
+      if (!hit) bad.push(`${secret.id} -> "${text}"`);
     }
   }
 
@@ -737,7 +764,7 @@ check('cada pista sugerida contiene una palabra clave de su secreto', () => {
 check('enviar la pista sugerida revela ese secreto', () => {
   for (const person of CONTACTS) {
     for (const secret of person.secrets) {
-      const hint = secret.revealHint ?? '';
+      const hint = probeTextFor(person, secret.id) ?? '';
       const revealed = pickSecretToReveal({
         contact: person,
         trust: secret.minTrust,
@@ -775,6 +802,61 @@ check('las frases para subir confianza suman en su temperamento', () => {
   }
 
   return `${CONTACTS.length} temperamentos`;
+});
+
+check('la frase de confianza sugerida nunca resta en ningún seed', () => {
+  for (const person of CONTACTS) {
+    for (let seed = 0; seed < 6; seed += 1) {
+      const suggestions = buildSuggestions({
+        contact: person,
+        trust: 5,
+        revealedSecretIds: ALL_SECRETS.filter((id) => person.secrets.every((s) => s.id !== id)),
+        claims: [],
+        evidenceOwned: [],
+        sentEvidenceIds: [],
+        seed
+      });
+
+      const builder = suggestions.find((s) => s.id.startsWith('trust:'));
+      if (!builder || builder.kind !== 'say') continue;
+
+      const delta = analyzeMessage(builder.text, person).trustDelta;
+      expect(
+        delta > 0,
+        `${person.id} seed ${seed}: "${builder.text}" da ${delta}`
+      );
+    }
+  }
+
+  return `${CONTACTS.length} contactos x 6 seeds`;
+});
+
+check('no se sugiere confrontar una afirmación que es verdad', () => {
+  const truthClaim: Claim = {
+    id: 'ct',
+    contactId: 'victor',
+    topic: 'statue',
+    statement: 'Moví la estatua del vestíbulo yo solo, nada más.',
+    truth: 'truth',
+    exposed: false,
+    createdAt: Date.now()
+  };
+
+  const suggestions = buildSuggestions({
+    contact: victor,
+    trust: 80,
+    revealedSecretIds: [],
+    claims: [truthClaim],
+    evidenceOwned: ['statue_dust'],
+    sentEvidenceIds: [],
+    seed: 0
+  });
+
+  expect(
+    !suggestions.some((s) => s.id.startsWith('confront:')),
+    'sugirió confrontar una verdad (el jugador perdería confianza)'
+  );
+  return 'verdad no sugerida';
 });
 
 check('sin confianza suficiente no se sugiere la pista, pero sí subirla', () => {

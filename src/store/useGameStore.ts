@@ -51,6 +51,12 @@ interface GameStore {
   activeContactId: string | null;
   typingContactId: string | null;
 
+  /**
+   * Frase que el panel de misiones quiere escribir en el compositor al abrir
+   * un chat. Transitoria: no se persiste y el Composer la consume una vez.
+   */
+  pendingComposerText: { contactId: string; text: string } | null;
+
   aiStatus: AIStatus;
   aiProgress: number;
   aiStatusText: string;
@@ -76,6 +82,11 @@ interface GameStore {
 
   openContact: (contactId: string) => void;
   backToList: () => void;
+
+  /** Abre el chat de la misión y deja la frase pista escrita en el compositor. */
+  applyMissionHint: (hint: { contactId: string; text: string }) => void;
+  /** El Composer llama a esto para consumir la frase pendiente al cambiar de chat. */
+  consumePendingComposerText: (contactId: string) => string | null;
 
   sendMessage: (contactId: string, text: string) => Promise<void>;
   sendEvidence: (contactId: string, evidenceId: string) => Promise<void>;
@@ -160,6 +171,7 @@ function createInitialState(playerName: string | null = null) {
 
     activeContactId: null as string | null,
     typingContactId: null as string | null,
+    pendingComposerText: null as { contactId: string; text: string } | null,
 
     aiStatus: 'idle' as AIStatus,
     aiProgress: 0,
@@ -721,6 +733,26 @@ export const useGameStore = create<GameStore>()(
 
         backToList: () => {
           set({ activeContactId: null });
+        },
+
+        applyMissionHint: ({ contactId, text }) => {
+          const state = get();
+          if (!state.contacts[contactId]?.unlocked) return;
+
+          set({
+            showMissions: false,
+            pendingComposerText: text.trim() ? { contactId, text } : null
+          });
+
+          get().openContact(contactId);
+        },
+
+        consumePendingComposerText: (contactId) => {
+          const pending = get().pendingComposerText;
+          if (!pending || pending.contactId !== contactId) return null;
+
+          set({ pendingComposerText: null });
+          return pending.text;
         },
 
         sendMessage: async (contactId, text) => {

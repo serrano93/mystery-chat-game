@@ -35,7 +35,7 @@ export function ContactList() {
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-300/80">
               Caso Vidal
             </p>
-            <h1 className="mt-1 text-2xl font-bold leading-tight">Misterio en WhatsApp</h1>
+            <h1 className="mt-1 whitespace-nowrap text-xl font-bold leading-tight sm:text-2xl">Misterio en WhatsApp</h1>
             <p className="mt-1 text-sm text-slate-300">
               Resuelve el crimen desde el sofá
               {playerName ? ` · Detective ${playerName}` : ''}.

@@ -1,5 +1,6 @@
-import { CheckCircle2, ClipboardList, Target, X } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Lightbulb, Target, X } from 'lucide-react';
 import { contactMap } from '../lib/logic';
+import { missionHint, nextLatentMissionHint, type MissionHint } from '../lib/missionHints';
 import { useGameStore } from '../store/useGameStore';
 import type { Mission } from '../types';
 import { cn } from '../utils/cn';
@@ -36,6 +37,59 @@ function objectiveLabel(
   }
 }
 
+function HintButton({ hint }: { hint: MissionHint | null }) {
+  const applyMissionHint = useGameStore((s) => s.applyMissionHint);
+  const sendEvidence = useGameStore((s) => s.sendEvidence);
+  const setShowMissions = useGameStore((s) => s.setShowMissions);
+  const setShowAccuse = useGameStore((s) => s.setShowAccuse);
+
+  if (!hint) return null;
+
+  const unlocked = useGameStore.getState().contacts[hint.contactId]?.unlocked ?? false;
+
+  const label = hint.action === 'send_evidence' ? '💡 Pista: enviar la prueba' : '💡 Pista';
+
+  const handleClick = () => {
+    if (hint.action === 'accuse') {
+      setShowMissions(false);
+      setShowAccuse(true);
+      return;
+    }
+    if (hint.action === 'send_evidence' && hint.evidenceId && unlocked) {
+      setShowMissions(false);
+      void sendEvidence(hint.contactId, hint.evidenceId);
+      return;
+    }
+    applyMissionHint({ contactId: hint.contactId, text: hint.text });
+  };
+
+  return (
+    <div className="mt-3 rounded-xl border border-amber-300/50 bg-amber-50 p-3 dark:border-amber-400/20 dark:bg-amber-400/10">
+      <button
+        onClick={handleClick}
+        disabled={!unlocked && hint.action !== 'accuse'}
+        className={cn(
+          'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition',
+          unlocked || hint.action === 'accuse'
+            ? 'bg-amber-500 text-white hover:bg-amber-600 active:scale-[0.98]'
+            : 'cursor-not-allowed bg-slate-200 text-slate-400 dark:bg-white/10 dark:text-slate-500'
+        )}
+      >
+        <Lightbulb className="h-4 w-4 shrink-0" />
+        {unlocked || hint.action === 'accuse' ? label : '💡 Pista: contacto aún bloqueado'}
+      </button>
+      <p className="mt-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200/80">
+        {hint.why}
+      </p>
+      {hint.text && hint.action !== 'accuse' && hint.action !== 'send_evidence' ? (
+        <p className="mt-1.5 break-words rounded-lg bg-white/70 p-2 font-mono text-[11px] text-slate-700 dark:bg-black/20 dark:text-slate-200">
+          «{hint.text}»
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function MissionPanel() {
   const show = useGameStore((s) => s.showMissions);
   const setShow = useGameStore((s) => s.setShowMissions);
@@ -49,6 +103,12 @@ export function MissionPanel() {
 
   const active = missions.filter((m) => m.active && !m.completed);
   const completed = missions.filter((m) => m.completed);
+
+  const hintParams = { contacts, revealedSecretIds, evidenceOwned, claims };
+  const latent =
+    active.length === 0 && completed.length < missions.length
+      ? nextLatentMissionHint({ missions, ...hintParams })
+      : null;
 
   return (
     <div className="absolute inset-0 z-45 flex items-end justify-center bg-black/45 backdrop-blur-sm">
@@ -90,7 +150,19 @@ export function MissionPanel() {
 
             {active.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-center text-sm text-slate-500 dark:border-white/15 dark:text-slate-400">
-                No hay misiones activas. Sigue hablando con los contactos.
+                {latent ? (
+                  <>
+                    <p>No hay misiones activas, pero el caso sigue abierto. Este es tu siguiente paso:</p>
+                    <p className="mt-2 font-semibold text-slate-700 dark:text-slate-200">
+                      {latent.mission.title}
+                    </p>
+                    <HintButton hint={latent.hint} />
+                  </>
+                ) : completed.length >= missions.length && missions.length > 0 ? (
+                  'Has completado todas las misiones. Presenta tu acusación final.'
+                ) : (
+                  'No hay misiones activas. Sigue hablando con los contactos.'
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -146,6 +218,7 @@ export function MissionPanel() {
                           <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                             {label}
                           </p>
+                          <HintButton hint={missionHint({ mission, ...hintParams })} />
                         </div>
                       </div>
                     </div>

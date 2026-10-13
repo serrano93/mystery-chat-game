@@ -739,9 +739,10 @@ export const useGameStore = create<GameStore>()(
           const state = get();
           if (!state.contacts[contactId]?.unlocked) return;
 
+          const trimmed = text.trim();
           set({
             showMissions: false,
-            pendingComposerText: text.trim() ? { contactId, text } : null
+            pendingComposerText: trimmed ? { contactId, text: trimmed } : null
           });
 
           get().openContact(contactId);

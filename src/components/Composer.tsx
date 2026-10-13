@@ -1,5 +1,5 @@
 import { Paperclip, Send } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { contactMap } from '../lib/logic';
 import { buildSuggestions } from '../lib/suggestions';
 import { useGameStore } from '../store/useGameStore';
@@ -18,6 +18,8 @@ export function Composer({ contactId }: ComposerProps) {
   const typing = useGameStore((s) => s.typingContactId);
   const gameOver = useGameStore((s) => s.gameOver);
   const solved = useGameStore((s) => s.solved);
+  const pendingComposerText = useGameStore((s) => s.pendingComposerText);
+  const consumePendingComposerText = useGameStore((s) => s.consumePendingComposerText);
 
   const messages = useGameStore((s) => s.messages);
   const contacts = useGameStore((s) => s.contacts);
@@ -29,6 +31,15 @@ export function Composer({ contactId }: ComposerProps) {
   const disabled = Boolean(typing) || gameOver || solved;
   const contact = contactMap[contactId];
   const contactMessages = messages[contactId] ?? [];
+
+  // Frase pista enviada desde el panel de misiones: se escribe en el
+  // compositor al abrir el chat correspondiente y se consume una sola vez.
+  useEffect(() => {
+    if (!pendingComposerText || pendingComposerText.contactId !== contactId) return;
+
+    setText(pendingComposerText.text);
+    consumePendingComposerText(contactId);
+  }, [pendingComposerText, contactId, consumePendingComposerText]);
 
   const suggestions = useMemo(() => {
     if (!contact || disabled) return [];

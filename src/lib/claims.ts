@@ -71,10 +71,6 @@ export function maybeRecordClaim(params: {
   const topic = detectClaimTopic(reply, tags, contact.id);
   if (!topic) return null;
 
-  if (claims.some((c) => c.contactId === contact.id && c.topic === topic)) {
-    return null;
-  }
-
   const canonical = getCanonicalClaim(contact.id, topic);
   if (!canonical) return null;
 
@@ -82,15 +78,31 @@ export function maybeRecordClaim(params: {
   const requiredTrust = canonical.requiredTrust ?? 70;
   const truth: Claim['truth'] = trust >= requiredTrust || hasEvidence ? 'truth' : 'lie';
 
+  const existing = claims.find((c) => c.contactId === contact.id && c.topic === topic);
+
+  // Red de seguridad del modo local: si el personaje ya había soltado la
+  // verdad (p. ej. por un secreto revelado) y ahora, con menos confianza o
+  // en guardia, repite su versión protegida, se corrige el registro para que
+  // las misiones de confrontación nunca queden imposibles.
+  if (existing && !existing.exposed && existing.truth === 'truth' && truth === 'lie') {
+    return { ...existing, statement: shortenStatement(reply), truth: 'lie' };
+  }
+
+  if (existing) return null;
+
   return {
     id: uid(),
     contactId: contact.id,
     topic,
-    statement: reply.length > 220 ? `${reply.slice(0, 220)}…` : reply,
+    statement: shortenStatement(reply),
     truth,
     exposed: false,
     createdAt: now()
   };
+}
+
+function shortenStatement(reply: string): string {
+  return reply.length > 220 ? `${reply.slice(0, 220)}…` : reply;
 }
 
 export interface ConfrontationResult {
